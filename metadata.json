@@ -1,0 +1,6 @@
+{
+  "name": "حوّلها",
+  "description": "مساعد ذكي لتحويل مواردك ومقتنياتك إلى مصادر دخل ومشاريع وخدمات مبتكرة وتوفير المال",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

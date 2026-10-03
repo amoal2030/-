@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="ar" dir="rtl" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>حوّلها | مساعدك الذكي لتحويل الموارد إلى مصادر دخل ومشاريع</title>
+    <meta name="description" content="مساعد ذكي لتحويل مواردك ومقتنياتك إلى مصادر دخل ومشاريع وخدمات مبتكرة وتوفير المال" />
+    
+    <!-- الوسوم الاجتماعية (Open Graph & Twitter) -->
+    <meta property="og:title" content="حوّلها | مساعدك الذكي لتحويل الموارد إلى مصادر دخل ومشاريع" />
+    <meta property="og:description" content="ما تملكه اليوم قد يكون فرصتك للغد. اكتشف كيف تحول مقتنياتك ومهاراتك إلى أفكار مشاريع وخدمات واقعية." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- الخطوط العربية من Google Fonts (Tajawal & Cairo) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@600;700;800;900&family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet" />
+
+    <!-- ملف التنسيقات الرئيسي (CSS3) -->
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <!-- رأس الصفحة وشريط التنقل -->
+    <header class="site-header" id="siteHeader">
+      <div class="container header-inner">
+        <!-- شعار وهوية التطبيق -->
+        <a href="#" class="brand-logo" id="brandLogo" aria-label="الصفحة الرئيسية لتطبيق حوّلها">
+          <div class="logo-icon-wrap" id="logoIcon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
+            </svg>
+          </div>
+          <span>حوّلها</span>
+          <span class="logo-tag">ذكاء الموارد</span>
+        </a>
+
+        <!-- أزرار الإجراءات والتنقل -->
+        <div class="header-actions" id="headerActions">
+          <button class="nav-link-btn active" id="navHomeBtn" title="اكتشف الفرص">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+              <polyline points="9 22 9 12 15 12 15 22"></polyline>
+            </svg>
+            <span>الرئيسية</span>
+          </button>
+
+          <button class="nav-link-btn" id="navSavedBtn" title="أفكاري المحفوظة">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span>أفكاري المحفوظة</span>
+            <span class="nav-badge" id="savedBadgeCount" style="display: none;">0</span>
+          </button>
+
+          <!-- زر تبديل الوضع الداكن والنهاري -->
+          <button class="theme-toggle-btn" id="themeToggleBtn" aria-label="تبديل مظهر العرض (نهاري / ليلي)">
+            <span id="themeIcon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+              </svg>
+            </span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- المحتوى الرئيسي -->
+    <main class="container" id="mainContent">
+      <!-- قسم الترويسة والرسالة التسويقية -->
+      <section class="hero-section" id="heroSection">
+        <div class="hero-pill" id="heroPill">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+          </svg>
+          <span>مساعد استثمار المقتنيات والمهارات الشخصية</span>
+        </div>
+
+        <h1 class="hero-title" id="heroTitle">
+          «ما تملكه اليوم قد يكون <span class="highlight">فرصتك للغد</span>»
+        </h1>
+
+        <p class="hero-subtitle" id="heroSubtitle">
+          اكتب ما تملكه من أدوات أو مقتنيات أو مهارات أو أوقات فراغ، وسيتولى المساعد الذكي تحويلها إلى مصادر دخل سريعة، أو أفكار مشاريع، أو خدمات قابلة للبيع فورًا.
+        </p>
+
+        <!-- أمثلة الإلهام السريعة بنقرة واحدة -->
+        <div class="inspiration-box" id="inspirationBox">
+          <div class="inspiration-label">أمثلة سريعة للتجربة الفورية:</div>
+          <div class="chips-container" id="chipsContainer">
+            <button class="chip-btn" data-text="لدي لابتوب، إنترنت سريع، ساعتان يوميًا، وأجيد استخدام الجوال والبحث">
+              💻 لابتوب وإنترنت وبحث
+            </button>
+            <button class="chip-btn" data-text="أملك سيارة نظيفة، هاتف ذكي، و3 ساعات فراغ في الفترة المسائية">
+              🚗 سيارة وأوقات مسائية
+            </button>
+            <button class="chip-btn" data-text="لدي كاميرا تصوير احترافية، عدسة واسعة، وشغف بتصوير الأماكن والمنتجات">
+              📷 كاميرا وشغف تصوير
+            </button>
+            <button class="chip-btn" data-text="لدي غرفة إضافية خالية في المنزل، نظيفة وجافة وبمساحة 16 مترًا مربعًا">
+              📦 غرفة فارغة ومساحة تخزين
+            </button>
+            <button class="chip-btn" data-text="لدي مطبخ منزلي مجهز، أحب إعداد الحلويات والوجبات الصحية الخفيفة">
+              🍳 مطبخ وشغف بالوجبات
+            </button>
+            <button class="chip-btn" data-text="أجيد اللغة الإنجليزية بطلاقة وتصحيح الأخطاء اللغوية وكتابة السير الذاتية">
+              🗣️ لغة إنجليزية وترجمة
+            </button>
+            <button class="chip-btn" data-text="أملك صندوق أدوات صيانة كامل ودريل ومعدات تركيب يدوية">
+              🛠️ أدوات صيانة وتركيب
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- بطاقة إدخال الموارد والمعاملات -->
+      <section class="form-section" id="formSection">
+        <div class="form-card" id="formCard">
+          <!-- رسالة الخطأ -->
+          <div class="alert-box alert-error" id="alertBox" style="display: none;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <span id="alertText">يرجى كتابة وصف لما تملكه أولاً.</span>
+          </div>
+
+          <!-- الحقل الرئيسي لوصف الموارد والمقتنيات -->
+          <div class="form-group">
+            <label class="form-label" for="resourceInput">
+              <span>ماذا تملك أو تستطيع استخدامه؟</span>
+              <span class="form-label-desc">أدوات، مقتنيات، مهارات، مساحات، أو أي مورد</span>
+            </label>
+            <div class="textarea-wrap">
+              <textarea
+                class="input-textarea"
+                id="resourceInput"
+                placeholder="مثال: لدي لابتوب، إنترنت، ساعتان يوميًا، وأجيد استخدام الجوال..."
+                rows="4"
+              ></textarea>
+            </div>
+          </div>
+
+          <!-- شبكة الخيارات الإضافية -->
+          <div class="params-grid" id="paramsGrid">
+            <!-- عدد الساعات المتاحة يوميًا -->
+            <div class="param-item">
+              <label class="param-label" for="hoursSelect">عدد الساعات المتاحة يوميًا</label>
+              <select class="custom-select" id="hoursSelect">
+                <option value="1">ساعة واحدة يوميًا</option>
+                <option value="2" selected>ساعتان يوميًا</option>
+                <option value="3-4">3 إلى 4 ساعات يوميًا</option>
+                <option value="5+">5 ساعات فأكثر (تفرغ كامل أو جزئي كبير)</option>
+              </select>
+            </div>
+
+            <!-- الميزانية المتاحة -->
+            <div class="param-item">
+              <label class="param-label" for="budgetSelect">الميزانية المتاحة للبدء</label>
+              <select class="custom-select" id="budgetSelect">
+                <option value="بدون رأس مال (0 ريال)" selected>بدون رأس مال (0 ريال)</option>
+                <option value="أقل من 500 ريال">ميزانية بسيطة (أقل من 500 ريال)</option>
+                <option value="500 - 2,000 ريال">ميزانية متوسطة (500 - 2,000 ريال)</option>
+                <option value="أكثر من 2,000 ريال">ميزانية مرنة ومتاحة للاستثمار</option>
+              </select>
+            </div>
+
+            <!-- هدف المستخدم -->
+            <div class="param-item">
+              <label class="param-label" for="goalSelect">هدفك الأساسي</label>
+              <select class="custom-select" id="goalSelect">
+                <option value="أريد دخلًا سريعًا" selected>أريد دخلًا سريعًا</option>
+                <option value="أريد إنشاء مشروع">أريد إنشاء مشروع</option>
+                <option value="أريد تقديم خدمة">أريد تقديم خدمة</option>
+                <option value="أريد توفير المال">أريد توفير المال</option>
+                <option value="أريد فكرة مبتكرة">أريد فكرة مبتكرة</option>
+              </select>
+            </div>
+
+            <!-- مستوى الخبرة -->
+            <div class="param-item">
+              <label class="param-label" for="levelSelect">مستوى الخبرة</label>
+              <select class="custom-select" id="levelSelect">
+                <option value="مبتدئ" selected>مبتدئ (لا أحتاج لخبرة سابقة)</option>
+                <option value="متوسط">متوسط (لدي أساسيات عامة)</option>
+                <option value="متقدم">متقدم (مستعد لتحديات احترافية)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- زر الإجراء الرئيسي -->
+          <div class="submit-btn-wrap">
+            <button class="btn-primary" id="discoverBtn" type="button">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
+              </svg>
+              <span>اكتشف فرصي</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- شاشة التحميل الذكية التفاعلية -->
+      <section class="loading-view" id="loadingSection">
+        <div class="loading-orb-wrap" id="loadingOrbWrap">
+          <div class="loading-orb-pulse"></div>
+          <div class="loading-orb-inner">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+            </svg>
+          </div>
+        </div>
+
+        <h3 class="loading-title">جاري استكشاف فرصك الاستثمارية</h3>
+        <div class="loading-step-msg" id="loadingStepMsg">نحلل مواردك وإمكاناتك المتاحة...</div>
+
+        <div class="loading-progress-track">
+          <div class="loading-progress-bar" id="loadingProgressBar"></div>
+        </div>
+      </section>
+
+      <!-- قسم عرض النتائج والفرص المكتشفة -->
+      <section class="results-view" id="resultsSection">
+        <!-- شريط ملخص النتائج وأزرار التحكم -->
+        <div class="results-header-bar" id="resultsHeaderBar">
+          <div class="results-summary-info">
+            <h2>الفرص المخصصة لك</h2>
+            <div class="results-summary-meta" id="resultsSummaryMeta">
+              <!-- يتم ملؤها ديناميكيًا -->
+            </div>
+          </div>
+
+          <div class="results-actions-group" id="resultsActionsGroup">
+            <button class="btn-secondary" id="btnEditInput" title="تعديل المدخلات الحالية">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+              <span>تعديل بياناتي</span>
+            </button>
+
+            <button class="btn-secondary" id="btnReanalyze" title="إعادة التحليل لفرص أخرى">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path></svg>
+              <span>إعادة التحليل</span>
+            </button>
+
+            <button class="btn-secondary" id="btnCopyAllResults" title="نسخ ملخص كل النتائج">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              <span>نسخ كل النتائج</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- شبكة بطاقات الفرص -->
+        <div class="opportunities-grid" id="opportunitiesGrid">
+          <!-- يتم إدراج بطاقات الفرص بواسطة JavaScript -->
+        </div>
+      </section>
+
+      <!-- صفحة «أفكاري المحفوظة» -->
+      <section class="saved-ideas-view" id="savedSection">
+        <div class="saved-header-bar">
+          <div>
+            <h2 style="font-size: 1.35rem; font-weight: 800;">أفكاري المحفوظة</h2>
+            <p style="font-size: 0.9rem; color: var(--text-muted);">الأفكار وخطط التنفيذ التي قمت بحفظها للرجوع إليها في أي وقت</p>
+          </div>
+        </div>
+
+        <!-- حالة فارغة في حال عدم وجود أفكار محفوظة -->
+        <div class="empty-saved-state" id="emptySavedState" style="display: none;">
+          <div class="empty-icon-wrap">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+            </svg>
+          </div>
+          <h3 class="empty-title">لا توجد أفكار محفوظة بعد</h3>
+          <p class="empty-desc">عندما تعجبك أي فرصة أو خطة عمل، اضغط على علامة الحفظ لحفظها هنا ومتابعتها بسهولة.</p>
+          <button class="btn-primary" id="btnDiscoverFromSaved" style="margin-inline: auto; height: 46px; font-size: 1rem;">
+            ابدأ باستكشاف الفرص الآن
+          </button>
+        </div>
+
+        <!-- شبكة الأفكار المحفوظة -->
+        <div class="opportunities-grid" id="savedGrid">
+          <!-- يتم توليدها ديناميكيًا -->
+        </div>
+      </section>
+    </main>
+
+    <!-- النافذة المنبثقة لخطة التنفيذ (Modal) -->
+    <div class="modal-overlay" id="planModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-container" id="modalContainer">
+        <!-- رأس المودال -->
+        <div class="modal-header">
+          <div class="modal-header-titles">
+            <span class="badge-type" id="modalTypeBadge">نوع الفرصة</span>
+            <h3 class="modal-title" id="modalTitle">اسم الفكرة</h3>
+          </div>
+          <button class="modal-close-btn" id="modalCloseBtn" aria-label="إغلاق النافذة">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+
+        <!-- جسم المودال ومحتوى الخطة التفصيلية -->
+        <div class="modal-body" id="modalBodyContent">
+          <!-- يتم تعبئة الأقسام تفصيليًا عبر app.js -->
+        </div>
+
+        <!-- تذييل المودال وأزرار الإجراءات -->
+        <div class="modal-footer">
+          <div class="modal-footer-actions">
+            <button class="btn-secondary" id="modalCopyBtn" title="نسخ الخطة بالكامل">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+              <span>نسخ الخطة كاملة</span>
+            </button>
+
+            <button class="btn-secondary" id="modalShareBtn" title="مشاركة الفكرة">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="18" cy="5" r="3"></circle>
+                <circle cx="6" cy="12" r="3"></circle>
+                <circle cx="18" cy="19" r="3"></circle>
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+              </svg>
+              <span>مشاركة</span>
+            </button>
+          </div>
+
+          <button class="btn-primary" id="modalSaveBtn" style="height: 42px; padding-inline: 1.5rem; font-size: 0.95rem;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span>حفظ الفكرة</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- حاوية الإشعارات المنبثقة (Toasts) -->
+    <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+
+    <!-- تذييل الصفحة -->
+    <footer class="site-footer" id="siteFooter">
+      <div class="container footer-content">
+        <div style="font-weight: 800; font-size: 1.15rem; color: var(--text-primary);">«حوّلها»</div>
+        <p style="color: var(--text-secondary); font-size: 0.95rem;">ما تملكه اليوم قد يكون فرصتك للغد</p>
+        <p class="footer-disclaimer">
+          تنويه: جميع الأفكار وتقديرات الدخل المعروضة هي نماذج استرشادية واقتراحات ذكية تهدف لتحفيز التفكير الإبداعي واستغلال الموارد، وتعتمد النتائج الحقيقية على التوفيق والسعي وجودة التنفيذ.
+        </p>
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem;">
+          جميع الحقوق محفوظة &copy; تطبيق حوّلها
+        </div>
+      </div>
+    </footer>
+
+    <!-- ملف المنطق التفاعلي (Vanilla JavaScript) -->
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
