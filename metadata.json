@@ -1,0 +1,6 @@
+{
+  "name": "صنوف | SUNOUF - المنصة الفاخرة لقوائم الطعام الرقمية والطلبات",
+  "description": "منصة صنوف الرقمية لقوائم الطعام الذكية، إدارة الطلبات، وحجز الطاولات والمناسبات للعلامات التجارية والمطاعم الفاخرة.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

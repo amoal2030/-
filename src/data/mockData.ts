@@ -1,0 +1,193 @@
+import { MenuItem, Category, PricingPlan } from '../types';
+
+export const HERO_IMAGE = '/src/assets/images/sunouf_hero_ambiance_1792778588041.jpg';
+export const SIGNATURE_DISH_IMAGE = '/src/assets/images/sunouf_signature_dish_1792778588641.jpg';
+export const ARTISAN_DESSERT_IMAGE = '/src/assets/images/sunouf_artisan_dessert_1792778589223.jpg';
+export const SPECIALTY_DRINK_IMAGE = '/src/assets/images/sunouf_specialty_drink_1792778590595.jpg';
+export const SUNOUF_LOGO = '/assets/aistudio/1792776933838_1__5a26254c.png';
+
+export const CATEGORIES: Category[] = [
+  { id: 'all', name: 'الكل', iconName: 'Compass' },
+  { id: 'signature', name: 'أطباق خاصة', iconName: 'Sparkles' },
+  { id: 'mains', name: 'الأطباق الرئيسية', iconName: 'Utensils' },
+  { id: 'appetizers', name: 'المقبلات والشوربات', iconName: 'Soup' },
+  { id: 'desserts', name: 'الحلويات الفاخرة', iconName: 'Cake' },
+  { id: 'beverages', name: 'المشروبات والقهوة', iconName: 'Coffee' },
+];
+
+export const MENU_ITEMS: MenuItem[] = [
+  {
+    id: 'm1',
+    name: 'كتف ضأن نعيمي معتق بالزعفران',
+    nameEn: 'Royal Saffron Slow-Cooked Lamb',
+    description: 'مطبوخ ببطء لمدة 8 ساعات على نار هادئة، يقدم مع أرز الزعفران الملكي، اللوز المحمص، ورمان بري طازج.',
+    price: 185,
+    category: 'signature',
+    image: SIGNATURE_DISH_IMAGE,
+    calories: 740,
+    allergens: ['مكسرات'],
+    isPopular: true,
+    isChefSpecial: true,
+  },
+  {
+    id: 'm2',
+    name: 'كيكة الفستق الحلبي وورق الذهب',
+    nameEn: 'Artisan Pistachio & Gold Leaf Cake',
+    description: 'طبقات خفيفة من إسفنج الفستق المحمص مع كريمة المسكاربوني وماء الورد الدمشقي، مزينة بورق الذهب الصالح للأكل.',
+    price: 58,
+    category: 'desserts',
+    image: ARTISAN_DESSERT_IMAGE,
+    calories: 420,
+    allergens: ['مكسرات', 'مشتقات الحليب', 'بيض'],
+    isPopular: true,
+    isChefSpecial: true,
+  },
+  {
+    id: 'm3',
+    name: 'موكتايل صنوف بالزعفران والهيل',
+    nameEn: 'Sunouf Saffron & Cardamom Brew',
+    description: 'مزيج بارد منعش من الليمون الإيطالي المركز، منقوع الزعفران الفاخر، رغوة الهيل العطرية وكرات الثلج البلورية.',
+    price: 38,
+    category: 'beverages',
+    image: SPECIALTY_DRINK_IMAGE,
+    calories: 110,
+    allergens: [],
+    isPopular: true,
+    isChefSpecial: false,
+  },
+  {
+    id: 'm4',
+    name: 'مندي الريش الملكية المدخنة',
+    nameEn: 'Smoked Lamb Ribs Mandi',
+    description: 'ريش لحم ضأن بلدي متبلة ببهارات نجدية أصيلة ومدخنة بخشب الأراك، تقدم مع صوص الدقوس الحار ومرق غني.',
+    price: 165,
+    category: 'mains',
+    image: SIGNATURE_DISH_IMAGE,
+    calories: 680,
+    allergens: [],
+    isPopular: true,
+    isChefSpecial: false,
+  },
+  {
+    id: 'm5',
+    name: 'حمص كريمي بالكمأة السوداء والصنوبر',
+    nameEn: 'Black Truffle Hummus',
+    description: 'حمص حب بلدي ناعم ومخملي ممزوج بزيت الكمأة الإيطالية وصنوبر محمص بزبدة الغنم، يقدم مع خبز التنور الساخن.',
+    price: 46,
+    category: 'appetizers',
+    image: HERO_IMAGE,
+    calories: 320,
+    allergens: ['سمسم', 'مكسرات'],
+    isPopular: false,
+    isChefSpecial: false,
+  },
+  {
+    id: 'm6',
+    name: 'دلة القهوة السعودية الفاخرة (خولاني)',
+    nameEn: 'Premium Saudi Dallah Coffee',
+    description: 'بن خولاني من جبال جازان محمص بعناية مع حب الهيل والمسمار والزعفران، تقدم مع تمر سكري ملكي وطحينة فاخرة.',
+    price: 45,
+    category: 'beverages',
+    image: SPECIALTY_DRINK_IMAGE,
+    calories: 15,
+    allergens: ['سمسم'],
+    isPopular: true,
+    isChefSpecial: false,
+  },
+];
+
+export const PRICING_PLANS: PricingPlan[] = [
+  {
+    id: 'browse',
+    title: 'باقة تصفح فقط',
+    subtitle: 'Browse Only',
+    mode: 'browse',
+    tag: 'البداية الذكية',
+    highlight: 'عرض المنيو الرقمي السريع برمز QR بدقة فائقة وتصميم متجاوب لجميع الأجهزة.',
+    prices: {
+      weekly: 50,
+      monthly: 200,
+      yearly: 2400,
+      buyout: 1500,
+    },
+    features: [
+      'عرض المنيو الرقمي بتصميم فاخر مخصص',
+      'توليد وتحميل رموز QR مخصصة لكل طاولة',
+      'دعم كامل للصور عالية الدقة والتفاصيل الغذائية',
+      'عرض مسببات الحساسية والسعرات الحرارية',
+      'تحديث فوري للأسعار والأطباق اليومية',
+      'استضافة سريعة مشمولة ولوحة تحكم مرنة',
+    ],
+  },
+  {
+    id: 'order',
+    title: 'باقة تصفح + طلب',
+    subtitle: 'Browse & Order',
+    mode: 'order',
+    tag: 'الأكثر طلباً',
+    isPopular: true,
+    highlight: 'تصفح الوجبات، إضافة الأطباق للسلة، وتأكيد الطلب التلقائي الفوري عبر WhatsApp أو السيرفر.',
+    prices: {
+      weekly: 100,
+      monthly: 400,
+      yearly: 4800,
+      buyout: 1900,
+    },
+    features: [
+      'كافة مزايا باقة "تصفح" بالكامل',
+      'نظام سلة إلكتروني فوري ذكي وسلس',
+      'إرسال الطلبات المباشرة بنقرة واحدة عبر WhatsApp',
+      'ربط برقم كاشير المطعم وتحديد رقم الطاولة أو السفري',
+      'دعم الملاحظات الخاصة لكل صنف وإضافات الوجبات',
+      'تقارير الطلبات اليومية وسجل المبيعات',
+      'تقليل زمن الانتظار وزيادة مبيعات الطاولات بنسبة 35%',
+    ],
+  },
+  {
+    id: 'full',
+    title: 'باقة تصفح + طلبات + حجز',
+    subtitle: 'Full Suite & Reservations',
+    mode: 'full',
+    tag: 'الحل الشامل المتكامل',
+    highlight: 'الجناح المتكامل للمطاعم الفاخرة وصالات المناسبات: منيو رقمي، طلبات طاولات، وإدارة حجوزات كاملة.',
+    prices: {
+      weekly: 150,
+      monthly: 600,
+      yearly: 7200,
+      buyout: 2500,
+    },
+    features: [
+      'كافة مزايا "تصفح" و"الطلبات" المتقدمة',
+      'نظام حجز الطاولات المتقدم بالوقت واليوم وعدد الضيوف',
+      'حجز قاعات كبار الشخصيات VIP والمناسبات والحفلات',
+      'إشعارات تأكيد الحجز التلقائية ورسائل التذكير للعملاء',
+      'إدارة سعة الصالة وتجنب التعارض في المواعيد',
+      'دعم كامل للتكامل مع خادم C++ Crow الخلفي السريع',
+      'دعم فني خاص على مدار الساعة وتخصيص هوية كامل',
+    ],
+  },
+];
+
+export const TESTIMONIALS = [
+  {
+    name: 'سلطان المقرن',
+    role: 'المدير التنفيذي للتشغيل',
+    restaurant: 'مجموعة نجد للضيافة الفاخرة - الرياض',
+    quote: 'منصة صنوف اختصرت زمن طلب الضيوف بأكثر من 40%، وتجربة تصفح المنيو بالألوان الذهبية الفاخرة عكست فخامة مطعمنا أمام ضيوفنا بكل رقي.',
+    stat: '+38% زيادة في متوسط الفاتورة',
+  },
+  {
+    name: 'هند البسام',
+    role: 'مديرة العمليات والفعاليات',
+    restaurant: 'مطعم ومقهى لوتس آند كافيه - جدة',
+    quote: 'نظام حجز الطاولات والمناسبات في باقة Full Suite حرر فريق الاستقبال من الاتصالات اليومية المتكررة، وتنظيم المناسبات أصبح مؤتمتاً بنسبة 100%.',
+    stat: 'صفر تعارض في مواعيد الحجوزات',
+  },
+  {
+    name: 'عبدالله الخالدي',
+    role: 'مؤسس وشريك إداري',
+    restaurant: 'روشان لاونج - الخبر',
+    quote: 'ميزة إرسال الطلبات مباشرة إلى واتساب الكاشير وفرت علينا تكاليف أجهزة باهظة، وباقة التملك الدائم خيار لا يُنافس في السوق.',
+    stat: 'توفير 15,000 ر.س في عتاد الكاشير',
+  },
+];
