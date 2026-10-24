@@ -1,146 +1,198 @@
 import React from 'react';
-import { HERO_IMAGE } from '../data/mockData';
+import { Phone, MapPin, ArrowDown, Sparkles, MessageCircle, Clock } from 'lucide-react';
+import { RESTAURANT_INFO } from '../data/restaurantInfo';
+import { useLanguage } from '../context/LanguageContext';
 
 interface HeroProps {
-  onExploreSimulator: () => void;
-  onExplorePricing: () => void;
-  onOpenQrDemo: () => void;
+  onExploreMenu: () => void;
 }
 
-export const Hero: React.FC<HeroProps> = ({
-  onExploreSimulator,
-  onExplorePricing,
-  onOpenQrDemo,
-}) => {
+export const Hero: React.FC<HeroProps> = ({ onExploreMenu }) => {
+  const { isAr, t, currency } = useLanguage();
+
   return (
-    <section className="relative overflow-hidden pt-8 pb-16 lg:pt-14 lg:pb-20 border-b border-[#C29B38]/15 bg-[#F9F8F6]">
-      <div className="max-w-7xl mx-auto px-6">
-        {/* Split Grid: Value Proposition + High Impact Image Focal Carrier */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-14 items-center">
-          {/* Column 1: Copy and Primary CTAs */}
-          <div className="lg:col-span-7 flex flex-col justify-center">
-            {/* Official Logo Brand Lockup */}
-            <div className="flex items-center gap-3.5 mb-5">
-              <img
-                src="/assets/aistudio/1792776933838_1__5a26254c.png"
-                alt="شعار صُنوف SUNOUF"
-                className="w-14 h-14 object-contain rounded-full shadow-md border-2 border-[#C29B38]/40 p-0.5 bg-white"
-              />
-              <div className="flex flex-col">
-                <span className="text-xs font-bold tracking-widest text-[#C29B38] uppercase">
-                  منصة الجيل القادم لقطاع المطاعم والمقاهي الراقية
-                </span>
-                <span className="text-sm font-black text-[#333333]">
-                  صُنوف <span className="text-[#C29B38] font-bold text-xs uppercase tracking-wider">SUNOUF</span>
-                </span>
-              </div>
+    <section className="relative overflow-hidden bg-white dark:bg-neutral-950 border-b border-slate-200 dark:border-neutral-900 transition-colors duration-200">
+      {/* Subtle warm ambient glows */}
+      <div className="absolute top-0 right-1/4 w-96 h-96 bg-orange-500/10 dark:bg-orange-600/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-0 left-10 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 lg:py-16">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-center">
+          {/* Text Content */}
+          <div className="lg:col-span-7 space-y-6 text-start">
+            {/* Top Tagline from menu */}
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-100 dark:bg-orange-950/70 border border-orange-300 dark:border-orange-500/30 text-orange-700 dark:text-orange-400 text-xs sm:text-sm font-bold shadow-xs">
+              <Sparkles className="w-4 h-4 text-amber-500 dark:text-amber-400" />
+              <span>{t('tagline')}</span>
+              <span className="text-slate-400 dark:text-neutral-500">·</span>
+              <span className="text-slate-700 dark:text-neutral-300">{t('station_location_tag')}</span>
             </div>
 
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black text-[#333333] leading-[1.25] tracking-tight mb-5" style={{ textWrap: 'balance' }}>
-              منصة <span className="text-[#C29B38]">صُنوف</span> الرقمية للمنيو الذكي، إدارة الطلبات، وحجز الطاولات
+            {/* Main Headline */}
+            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black text-slate-900 dark:text-white tracking-tight leading-tight">
+              {t('hero_h1_lead')}{' '}
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 dark:from-amber-400 dark:via-orange-500 dark:to-amber-500">
+                {t('hero_h1_highlight')}
+              </span>{' '}
+              {t('hero_h1_trail')}
             </h1>
 
-            <p className="text-base lg:text-lg text-[#333333]/80 leading-relaxed mb-8 max-w-2xl font-normal">
-              ارتقِ بتجربة ضيوفك مع منيو رقمي فاخر يحمل هوية مطعمك الخاصة. اختر بين التصفح برمز QR فائق السرعة، الطلب المباشر الفوري عبر WhatsApp أو الكاشير، أو الجناح الكامل لإدارة حجوزات الطاولات والمناسبات الخاصة.
+            {/* Sub-headline */}
+            <p className="text-base sm:text-lg text-slate-600 dark:text-neutral-300 leading-relaxed max-w-2xl">
+              {t('hero_description')}
             </p>
 
-            {/* Primary Action Buttons */}
-            <div className="flex flex-wrap items-center gap-4 mb-10">
+            {/* Quick Action Buttons */}
+            <div className="flex flex-wrap items-center gap-3 pt-2">
               <button
-                onClick={onExploreSimulator}
-                className="px-6 py-3.5 text-sm font-bold text-white bg-[#C29B38] hover:bg-[#A37E28] active:scale-[0.98] rounded-xl shadow-md hover:shadow-lg transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-2"
+                onClick={onExploreMenu}
+                className="px-6 py-3.5 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-neutral-950 font-black text-base rounded-xl transition-all shadow-lg shadow-orange-600/20 active:scale-95 flex items-center gap-2 cursor-pointer"
               >
-                <span>تجربة المحاكي التفاعلي الحي</span>
-                <span aria-hidden="true" className="text-xs">←</span>
+                <span>{t('explore_menu_btn')}</span>
+                <ArrowDown className="w-4 h-4 animate-bounce" />
               </button>
 
-              <button
-                onClick={onExplorePricing}
-                className="px-6 py-3.5 text-sm font-bold text-[#333333] bg-[#F8F3E6] hover:bg-[#eadecc] border border-[#C29B38]/30 rounded-xl transition-all cursor-pointer whitespace-nowrap shrink-0"
+              <a
+                href={`https://wa.me/${RESTAURANT_INFO.whatsapp}?text=${encodeURIComponent(
+                  isAr
+                    ? 'السلام عليكم، أود الاستفسار والطلب من مطعم بروستد مشوار الفرسان'
+                    : 'Hello, I would like to inquire and place an order from Meshwar Al Forsan Broasted'
+                )}`}
+                target="_blank"
+                rel="noreferrer"
+                className="px-6 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-base rounded-xl transition-all shadow-md active:scale-95 flex items-center gap-2"
               >
-                خطط الأسعار والاشتراكات
-              </button>
+                <MessageCircle className="w-5 h-5" />
+                <span>{t('quick_order_whatsapp')}</span>
+              </a>
 
-              <button
-                onClick={onOpenQrDemo}
-                className="px-4 py-3.5 text-xs font-semibold text-[#A37E28] hover:text-[#C29B38] transition-colors cursor-pointer whitespace-nowrap shrink-0 underline decoration-[#C29B38]/40 underline-offset-4"
+              <a
+                href={`${import.meta.env.BASE_URL}assets/aistudio/______________36724bc9.pdf`}
+                target="_blank"
+                rel="noreferrer"
+                className="px-4 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-800 dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:text-amber-400 border border-slate-300 dark:border-neutral-700 font-bold text-xs sm:text-sm rounded-xl transition-colors flex items-center gap-2 shadow-xs"
               >
-                معاينة وتوليد كود QR للطاولة
-              </button>
+                <span>{t('view_original_pdf')}</span>
+              </a>
+
+              <a
+                href={RESTAURANT_INFO.mapsUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="px-4 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:text-neutral-300 dark:hover:text-white border border-slate-300 dark:border-neutral-700 font-semibold text-xs sm:text-sm rounded-xl transition-colors flex items-center gap-2 shadow-xs"
+              >
+                <MapPin className="w-4 h-4 text-orange-500" />
+                <span>{t('view_on_map')}</span>
+              </a>
             </div>
 
-            {/* Unboxed Metadata Strip */}
-            <div className="flex flex-wrap items-center gap-y-2 gap-x-4 text-xs font-semibold text-[#333333]/70 pt-4 border-t border-[#C29B38]/20">
-              <span>خيار التملك الدائم بـ 1500 ر.س</span>
-              <span aria-hidden="true" className="text-[#C29B38]">·</span>
-              <span>طلب مباشر فوري عبر واتساب</span>
-              <span aria-hidden="true" className="text-[#C29B38]">·</span>
-              <span>دعم كامل لسيرفر C++ Crow فائق السرعة</span>
-              <span aria-hidden="true" className="text-[#C29B38]">·</span>
-              <span>تحديث أسعار وقوائم طعام بلحظات</span>
+            {/* Direct Calling Strip "اتصل قبل أن تصل" */}
+            <div className="pt-4 border-t border-slate-200 dark:border-neutral-800/80 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs sm:text-sm">
+              <a
+                href={`tel:${RESTAURANT_INFO.phone1}`}
+                className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-neutral-900/90 border border-slate-200 dark:border-neutral-800 hover:border-amber-500/50 transition-colors group shadow-xs"
+              >
+                <div className="w-9 h-9 rounded-lg bg-orange-100 dark:bg-orange-950 border border-orange-300 dark:border-orange-500/30 flex items-center justify-center text-orange-600 dark:text-orange-400 group-hover:scale-105 transition-transform">
+                  <Phone className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-slate-500 dark:text-neutral-400 text-[11px]">{t('call_or_whatsapp')}</div>
+                  <div className="font-mono font-bold text-slate-900 dark:text-neutral-100 text-sm group-hover:text-amber-500 dark:group-hover:text-amber-400">
+                    {RESTAURANT_INFO.whatsappFormatted}
+                  </div>
+                </div>
+              </a>
+
+              <a
+                href={`tel:${RESTAURANT_INFO.phone1}`}
+                className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-neutral-900/90 border border-slate-200 dark:border-neutral-800 hover:border-amber-500/50 transition-colors group shadow-xs"
+              >
+                <div className="w-9 h-9 rounded-lg bg-amber-100 dark:bg-amber-950 border border-amber-300 dark:border-amber-500/30 flex items-center justify-center text-amber-600 dark:text-amber-400 group-hover:scale-105 transition-transform">
+                  <Phone className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-slate-500 dark:text-neutral-400 text-[11px]">{isAr ? 'هاتف الفرع المباشر:' : 'Direct Branch Phone:'}</div>
+                  <div className="font-mono font-bold text-slate-900 dark:text-neutral-100 text-sm group-hover:text-amber-500 dark:group-hover:text-amber-400">
+                    {RESTAURANT_INFO.whatsappFormatted}
+                  </div>
+                </div>
+              </a>
             </div>
           </div>
 
-          {/* Column 2: High Impact 16:9 Image with Gold Frame Accent */}
-          <div className="lg:col-span-5">
-            <div className="relative rounded-2xl overflow-hidden shadow-2xl border border-[#C29B38]/30 group">
+          {/* Hero Visual Card */}
+          <div className="lg:col-span-5 relative">
+            <div className="relative rounded-2xl overflow-hidden border border-slate-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-xl group">
               <img
-                src={HERO_IMAGE}
-                alt="أجواء مطعم فاخر يستخدم منصة صنوف للمنيو الرقمي"
+                src="./assets/images/broasted_chicken_hero_1792665160048.jpg"
+                alt={isAr ? 'بروستد مشوار الفرسان الذهبي المقرمش' : 'Golden Crispy Broasted Chicken'}
+                className="w-full h-80 sm:h-96 object-cover group-hover:scale-105 transition-transform duration-700"
+                loading="eager"
                 referrerPolicy="no-referrer"
-                className="w-full aspect-[4/3] lg:aspect-square object-cover transition-transform duration-700 group-hover:scale-105"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent flex flex-col justify-end p-6 text-white">
-                <div className="text-xs font-medium text-[#D8B458] mb-1">
-                  أجواء الضيافة الراقية
+              <div className="absolute inset-0 bg-gradient-to-t from-neutral-950 via-neutral-950/30 to-transparent" />
+              
+              {/* Overlay Badge */}
+              <div className="absolute bottom-4 right-4 left-4 p-4 rounded-xl bg-neutral-950/85 backdrop-blur-md border border-neutral-800 text-start">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5" />
+                    {isAr ? 'تحضير فوري طازج' : 'Fresh & Fast Preparation'}
+                  </span>
+                  <span className="text-xs text-neutral-300 font-mono font-bold">
+                    {isAr ? `تبدأ من 18 ${currency}` : `Starts from 18 ${currency}`}
+                  </span>
                 </div>
-                <div className="text-lg font-bold">
-                  مطعم ومقهى نجد الفاخر
-                </div>
-                <div className="text-xs text-stone-300 mt-1">
-                  تجربة رقمية تعكس عراقة الضيافة وأناقة التقديم
-                </div>
+                <h3 className="text-base font-bold text-white mt-1">
+                  {isAr ? 'بروستد الفرسان المقرمش (عادي / حراق)' : 'Al Forsan Crispy Broasted (Regular / Spicy)'}
+                </h3>
+                <p className="text-xs text-neutral-300 mt-0.5">
+                  {isAr
+                    ? 'مع البطاطس الذهبية، صلصة الثوم الأصلية، والخبز الطازج.'
+                    : 'Served with golden fries, authentic garlic dip, and warm bread.'}
+                </p>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Claim-to-Proof Adjacency Strip: 4 KPI Metrics */}
-        <div className="mt-14 pt-10 border-t border-[#C29B38]/20 grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-          <div className="p-4 rounded-xl bg-[#F8F3E6]/60 border border-[#C29B38]/20">
-            <div className="text-2xl lg:text-3xl font-black text-[#C29B38] tabular-nums">
-              0.3 ثانية
-            </div>
-            <div className="text-xs text-[#333333]/70 font-semibold mt-1">
-              سرعة فتح المنيو عبر مسح الـ QR
-            </div>
+        {/* 4 Feature Pillars */}
+        <div className="mt-12 grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 text-start">
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-neutral-900/70 border border-slate-200 dark:border-neutral-800/80 hover:border-slate-300 dark:hover:border-neutral-700 transition-colors shadow-xs">
+            <div className="text-2xl mb-1.5">🍗</div>
+            <h4 className="font-bold text-sm text-slate-900 dark:text-neutral-100">
+              {isAr ? 'بروستد وكريسبي' : 'Broasted & Crispy'}
+            </h4>
+            <p className="text-xs text-slate-500 dark:text-neutral-400 mt-1">
+              {isAr ? 'دجاج طازج بتتبيلة ذهبية مقرمشة' : 'Fresh poultry in golden crispy seasoning'}
+            </p>
           </div>
-
-          <div className="p-4 rounded-xl bg-[#F8F3E6]/60 border border-[#C29B38]/20">
-            <div className="text-2xl lg:text-3xl font-black text-[#C29B38] tabular-nums">
-              +35%
-            </div>
-            <div className="text-xs text-[#333333]/70 font-semibold mt-1">
-              معدل زيادة طلب الأطباق والحلويات
-            </div>
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-neutral-900/70 border border-slate-200 dark:border-neutral-800/80 hover:border-slate-300 dark:hover:border-neutral-700 transition-colors shadow-xs">
+            <div className="text-2xl mb-1.5">🍢</div>
+            <h4 className="font-bold text-sm text-slate-900 dark:text-neutral-100">
+              {isAr ? 'مشويات بالكيلو' : 'Skewers by KG'}
+            </h4>
+            <p className="text-xs text-slate-500 dark:text-neutral-400 mt-1">
+              {isAr ? 'أسياخ طازجة + خضار وثوم مجاني' : 'Fresh charcoal skewers + free grilled veggies'}
+            </p>
           </div>
-
-          <div className="p-4 rounded-xl bg-[#F8F3E6]/60 border border-[#C29B38]/20">
-            <div className="text-2xl lg:text-3xl font-black text-[#C29B38] tabular-nums">
-              100%
-            </div>
-            <div className="text-xs text-[#333333]/70 font-semibold mt-1">
-              دقة تفاصيل الأصناف ومسببات الحساسية
-            </div>
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-neutral-900/70 border border-slate-200 dark:border-neutral-800/80 hover:border-slate-300 dark:hover:border-neutral-700 transition-colors shadow-xs">
+            <div className="text-2xl mb-1.5">🌯</div>
+            <h4 className="font-bold text-sm text-slate-900 dark:text-neutral-100">
+              {isAr ? 'شاورما وصحن عربي' : 'Shawarma & Arabic Plate'}
+            </h4>
+            <p className="text-xs text-slate-500 dark:text-neutral-400 mt-1">
+              {isAr ? 'خبز صاج محمص وصوصات خاصة' : 'Toasted saj wrap with signature dips'}
+            </p>
           </div>
-
-          <div className="p-4 rounded-xl bg-[#F8F3E6]/60 border border-[#C29B38]/20">
-            <div className="text-2xl lg:text-3xl font-black text-[#C29B38] tabular-nums">
-              3 باقات
-            </div>
-            <div className="text-xs text-[#333333]/70 font-semibold mt-1">
-              تصفح · طلب مباشر · حجز طاولات
-            </div>
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-neutral-900/70 border border-slate-200 dark:border-neutral-800/80 hover:border-slate-300 dark:hover:border-neutral-700 transition-colors shadow-xs">
+            <div className="text-2xl mb-1.5">🍹</div>
+            <h4 className="font-bold text-sm text-slate-900 dark:text-neutral-100">
+              {isAr ? 'عصائر طبيعية' : '100% Natural Juices'}
+            </h4>
+            <p className="text-xs text-slate-500 dark:text-neutral-400 mt-1">
+              {isAr ? 'عورقلب، فافخينة، وطبقات 100%' : 'Awar Qalb, Fakhfakhina & layered cocktails'}
+            </p>
           </div>
         </div>
       </div>

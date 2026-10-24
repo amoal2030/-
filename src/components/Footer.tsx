@@ -1,120 +1,104 @@
 import React from 'react';
+import { Phone, MapPin, MessageCircle } from 'lucide-react';
+import { RESTAURANT_INFO } from '../data/restaurantInfo';
+import { useLanguage } from '../context/LanguageContext';
 
-interface FooterProps {
-  onScrollTo: (id: string) => void;
-  onOpenQrDemo: () => void;
-}
+export const Footer: React.FC = () => {
+  const { isAr, t } = useLanguage();
 
-export const Footer: React.FC<FooterProps> = ({ onScrollTo, onOpenQrDemo }) => {
   return (
-    <footer className="bg-[#1A1A1A] text-stone-300 py-14 border-t border-[#C29B38]/30">
-      <div className="max-w-7xl mx-auto px-6">
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-10 pb-12 border-b border-stone-800">
-          {/* Brand Info */}
-          <div className="md:col-span-5 space-y-4">
+    <footer className="bg-slate-100 dark:bg-neutral-950 border-t border-slate-200 dark:border-neutral-800 text-slate-600 dark:text-neutral-400 text-start pt-12 pb-16 transition-colors duration-200">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+          {/* Col 1: Brand */}
+          <div className="md:col-span-2 space-y-3">
             <div className="flex items-center gap-3">
-              <img
-                src="/assets/aistudio/1792776933838_1__5a26254c.png"
-                alt="شعار صنوف SUNOUF"
-                className="w-12 h-12 object-contain rounded-full bg-white p-0.5 border border-[#C29B38]/40 shadow-sm"
-              />
-              <span className="text-xl font-black text-white">
-                صُنوف <span className="text-[#C29B38] font-bold text-sm tracking-widest uppercase">SUNOUF</span>
-              </span>
+              <div className="w-16 h-11 rounded-lg overflow-hidden shrink-0 shadow-md bg-white border border-slate-200 dark:border-neutral-800">
+                <img
+                  src={RESTAURANT_INFO.logo}
+                  alt={isAr ? RESTAURANT_INFO.name : RESTAURANT_INFO.nameEn}
+                  className="w-full h-full object-contain"
+                />
+              </div>
+              <h3 className="text-xl font-black text-slate-900 dark:text-white">
+                {isAr ? RESTAURANT_INFO.name : RESTAURANT_INFO.nameEn}
+              </h3>
             </div>
-
-            <p className="text-xs text-stone-400 leading-relaxed max-w-sm">
-              المنصة السحابية المتقدمة لقوائم الطعام الرقمية الذكية، إدارة الطلبات المباشرة، وحجز الطاولات والمناسبات للعلامات التجارية والمطاعم الراقية في المملكة والخليج.
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-neutral-400 leading-relaxed max-w-sm">
+              {isAr
+                ? 'أفضل خيار للبروستد المقرمش، المشويات على الفحم، والشاورما الطازجة والعصائر في الدمام. نلتزم بأعلى معايير الجودة والنظافة والطعم الأصيل.'
+                : 'The premier destination for crispy broasted chicken, charcoal-grilled skewers, fresh shawarma, and natural juices in Dammam. Committed to authentic taste and highest quality.'}
             </p>
-
-            <div className="text-[11px] text-stone-500 space-y-1">
-              <div>المكدس التقني: HTML5 · Tailwind CSS · JavaScript ES6 · C++ Crow Engine</div>
-              <div>خادم الباك إند: C++ Framework Port 8080 · معالجة فائقة السرعة</div>
+            <div className="text-xs text-amber-600 dark:text-amber-400 font-bold">
+              {isAr ? `شعارنا: «${RESTAURANT_INFO.tagline}»` : `Our Motto: "${t('tagline')}"`}
             </div>
           </div>
 
-          {/* Nav Quick Links */}
-          <div className="md:col-span-3 space-y-3">
-            <div className="text-xs font-bold text-white uppercase tracking-wider">
-              خدمات المنصة
-            </div>
+          {/* Col 2: Navigation Links */}
+          <div className="space-y-3">
+            <h4 className="font-bold text-sm text-slate-900 dark:text-white">{t('footer_quick_links')}</h4>
             <ul className="space-y-2 text-xs">
               <li>
-                <button
-                  onClick={() => onScrollTo('simulator')}
-                  className="hover:text-[#C29B38] transition-colors"
-                >
-                  01. تصفح فقط (Browse Only)
-                </button>
+                <a href="#menu" className="hover:text-amber-500 dark:hover:text-amber-400 transition-colors">
+                  {t('nav_menu')}
+                </a>
               </li>
               <li>
-                <button
-                  onClick={() => onScrollTo('simulator')}
-                  className="hover:text-[#C29B38] transition-colors"
-                >
-                  02. تصفح + طلب (Browse & Order)
-                </button>
+                <a href="#section-broasted" className="hover:text-amber-500 dark:hover:text-amber-400 transition-colors">
+                  {t('nav_broasted')}
+                </a>
               </li>
               <li>
-                <button
-                  onClick={() => onScrollTo('simulator')}
-                  className="hover:text-[#C29B38] transition-colors"
-                >
-                  03. تصفح + طلب + حجز (Full Suite)
-                </button>
+                <a href="#section-skewers_kg" className="hover:text-amber-500 dark:hover:text-amber-400 transition-colors">
+                  {t('nav_skewers')}
+                </a>
               </li>
               <li>
-                <button
-                  onClick={onOpenQrDemo}
-                  className="hover:text-[#C29B38] transition-colors"
-                >
-                  توليد كود QR للطاولة
-                </button>
+                <a href="#location" className="hover:text-amber-500 dark:hover:text-amber-400 transition-colors">
+                  {t('nav_location')}
+                </a>
               </li>
             </ul>
           </div>
 
-          {/* Pricing & Backend Links */}
-          <div className="md:col-span-4 space-y-3">
-            <div className="text-xs font-bold text-white uppercase tracking-wider">
-              الاشتراكات والتقنية
+          {/* Col 3: Contact */}
+          <div className="space-y-3">
+            <h4 className="font-bold text-sm text-slate-900 dark:text-white">{t('footer_contact_info')}</h4>
+            <div className="space-y-2 text-xs">
+              <a
+                href={`https://wa.me/${RESTAURANT_INFO.whatsapp}`}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 hover:underline font-mono"
+              >
+                <MessageCircle className="w-3.5 h-3.5" />
+                <span>{t('whatsapp_contact_btn')} {RESTAURANT_INFO.whatsappFormatted}</span>
+              </a>
+              <a
+                href={`tel:${RESTAURANT_INFO.phone2}`}
+                className="flex items-center gap-2 text-slate-700 dark:text-neutral-300 hover:text-slate-900 dark:hover:text-white font-mono"
+              >
+                <Phone className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
+                <span>{isAr ? 'الفرع:' : 'Branch:'} {RESTAURANT_INFO.whatsappFormatted}</span>
+              </a>
+              <div className="flex items-start gap-2 text-slate-600 dark:text-neutral-400 pt-1">
+                <MapPin className="w-3.5 h-3.5 text-orange-500 dark:text-orange-400 shrink-0 mt-0.5" />
+                <span>{isAr ? RESTAURANT_INFO.address : 'Petro Hala Station - Al Forsan, Dammam'}</span>
+              </div>
             </div>
-            <ul className="space-y-2 text-xs">
-              <li>
-                <button
-                  onClick={() => onScrollTo('pricing')}
-                  className="hover:text-[#C29B38] transition-colors"
-                >
-                  خطة التملك الدائم (1500 ر.س - 2500 ر.س)
-                </button>
-              </li>
-              <li>
-                <button
-                  onClick={() => onScrollTo('pricing')}
-                  className="hover:text-[#C29B38] transition-colors"
-                >
-                  الاشتراكات الأسبوعية والشهرية والسنوية
-                </button>
-              </li>
-              <li>
-                <button
-                  onClick={() => onScrollTo('contact')}
-                  className="text-[#C29B38] hover:text-[#D8B458] font-bold transition-colors"
-                >
-                  طلب انضمام المطعم وتفعيل فوري
-                </button>
-              </li>
-            </ul>
           </div>
         </div>
 
-        {/* Quiet Bottom Copyright */}
-        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between text-[11px] text-stone-500 gap-4">
+        {/* Bottom Bar */}
+        <div className="pt-6 border-t border-slate-200 dark:border-neutral-900 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 dark:text-neutral-500">
           <div>
-            جميع الحقوق محفوظة © {new Date().getFullYear()} منصة صُنوف (SUNOUF) لتقنية المطاعم.
+            © {new Date().getFullYear()} {isAr ? RESTAURANT_INFO.name : RESTAURANT_INFO.nameEn}. {t('footer_rights')}
           </div>
-          <div className="flex items-center gap-4">
-            <span>الهوية والألوان الرسمية: الذهبي (#C29B38) والفحمي (#333333)</span>
+          <div className="flex items-center gap-1">
+            <span>{isAr ? 'صُنِع بعناية لخدمة عملاء' : 'Crafted with care for customers of'}</span>
+            <span className="text-slate-700 dark:text-neutral-400 font-medium">
+              {isAr ? 'مشوار الفرسان' : 'Meshwar Al Forsan'}
+            </span>
           </div>
         </div>
       </div>

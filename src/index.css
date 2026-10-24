@@ -1,42 +1,36 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @layer base {
-  :root {
-    --sunouf-gold: #C29B38;
-    --sunouf-gold-hover: #A37E28;
-    --sunouf-gold-light: #F8F3E6;
-    --sunouf-charcoal: #333333;
-    --sunouf-cream: #F9F8F6;
-  }
-
-  body {
-    font-family: 'Cairo', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background-color: #F9F8F6;
-    color: #333333;
-    overflow-x: hidden;
+  html {
+    font-family: 'Cairo', 'Tajawal', system-ui, -apple-system, sans-serif;
+    scroll-behavior: smooth;
   }
 }
 
-/* Custom smooth luxury gold accent utility */
-.gold-gradient-bg {
-  background: linear-gradient(135deg, #C29B38 0%, #D8B458 50%, #A37E28 100%);
+/* Custom scrollbar for sleek food app feel */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
-
-.gold-border {
-  border-color: #C29B38;
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track, #121214);
 }
-
-.gold-glow {
-  box-shadow: 0 10px 30px -10px rgba(194, 155, 56, 0.35);
-}
-
-.phone-screen-scroll::-webkit-scrollbar {
-  width: 4px;
-}
-.phone-screen-scroll::-webkit-scrollbar-track {
-  background: #F8F3E6;
-}
-.phone-screen-scroll::-webkit-scrollbar-thumb {
-  background: #C29B38;
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb, #2a2a2e);
   border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #ea580c;
+}
+
+html:not(.dark) {
+  --scrollbar-track: #f1f5f9;
+  --scrollbar-thumb: #cbd5e1;
+}
+
+html.dark {
+  --scrollbar-track: #121214;
+  --scrollbar-thumb: #2a2a2e;
 }
