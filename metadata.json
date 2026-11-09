@@ -1,0 +1,8 @@
+{
+  "name": "الإقفال | AL EQFAL",
+  "description": "نظام محاسبي ذكي لإدارة الورديات اليومية ومبيعات النقد والشبكة والمصروفات وإقفال الصناديق للمؤسسات والمتاجر والمطاعم",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
