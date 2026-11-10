@@ -1,0 +1,415 @@
+{
+  "entities": {
+    "Organization": {
+      "title": "Organization",
+      "description": "Multi-tenant business organization entity (store, restaurant, cafe, enterprise)",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique organization ID"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120,
+          "description": "Organization trade name"
+        },
+        "commercialRegistration": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Commercial registration number"
+        },
+        "activityType": {
+          "type": "string",
+          "enum": ["retail", "restaurant", "supermarket", "services", "other"],
+          "description": "Type of commercial business"
+        },
+        "currency": {
+          "type": "string",
+          "enum": ["SAR", "AED", "QAR", "KWD", "USD"],
+          "description": "Base accounting currency"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owning manager"
+        },
+        "ownerEmail": {
+          "type": "string",
+          "description": "Email of the owning manager"
+        },
+        "ownerName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Full name of the manager"
+        },
+        "driveFolderId": {
+          "type": "string",
+          "description": "Google Drive folder ID for storing attachments"
+        },
+        "driveConnected": {
+          "type": "boolean",
+          "description": "Whether manager has linked their Google Drive account"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": ["id", "name", "activityType", "currency", "ownerId", "ownerEmail", "createdAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile holding tenant affiliation, role, branch, and permissions",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth user UID"
+        },
+        "orgId": {
+          "type": "string",
+          "description": "Affiliated organization ID"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address"
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "User display name"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["manager", "employee"],
+          "description": "Role within the organization"
+        },
+        "branchId": {
+          "type": "string",
+          "description": "Assigned branch ID for cashier/employee"
+        },
+        "branchName": {
+          "type": "string",
+          "description": "Assigned branch name"
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 25,
+          "description": "Phone number"
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Whether account is currently active"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Account creation timestamp"
+        }
+      },
+      "required": ["uid", "orgId", "email", "displayName", "role", "isActive", "createdAt"]
+    },
+    "Branch": {
+      "title": "Branch",
+      "description": "Commercial branch belonging to an organization",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Branch unique ID"
+        },
+        "orgId": {
+          "type": "string",
+          "description": "Parent organization ID"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100,
+          "description": "Branch display name"
+        },
+        "code": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Branch code/identifier"
+        },
+        "address": {
+          "type": "string",
+          "maxLength": 255,
+          "description": "Physical address"
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 25,
+          "description": "Contact telephone"
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Branch active status"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Branch creation timestamp"
+        }
+      },
+      "required": ["id", "orgId", "name", "code", "isActive", "createdAt"]
+    },
+    "ShiftClosing": {
+      "title": "ShiftClosing",
+      "description": "Daily shift closing financial record with cash, card, and expense reconciliations",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Shift closing unique ID"
+        },
+        "orgId": {
+          "type": "string",
+          "description": "Tenant organization ID"
+        },
+        "branchId": {
+          "type": "string",
+          "description": "Branch ID"
+        },
+        "branchName": {
+          "type": "string",
+          "description": "Branch name snapshot"
+        },
+        "employeeId": {
+          "type": "string",
+          "description": "UID of employee submitting closing"
+        },
+        "employeeName": {
+          "type": "string",
+          "description": "Name of employee"
+        },
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Shift calendar date YYYY-MM-DD"
+        },
+        "period": {
+          "type": "string",
+          "enum": ["morning", "evening"],
+          "description": "Shift timing period"
+        },
+        "cashSales": {
+          "type": "number",
+          "description": "Actual physical cash received"
+        },
+        "cardSales": {
+          "type": "number",
+          "description": "Electronic card POS network sales"
+        },
+        "totalSales": {
+          "type": "number",
+          "description": "Gross sales: cashSales + cardSales"
+        },
+        "expenses": {
+          "type": "number",
+          "description": "Petty cash purchases & expenses"
+        },
+        "remainingInBox": {
+          "type": "number",
+          "description": "Expected drawer cash: cashSales - expenses"
+        },
+        "netPeriod": {
+          "type": "number",
+          "description": "Net period revenue: totalSales - expenses"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Cashier or auditor remarks"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "pending_review", "approved", "rejected"],
+          "description": "Closing workflow approval status"
+        },
+        "rejectionReason": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Explanation provided by manager if rejected"
+        },
+        "attachmentIds": {
+          "type": "array",
+          "description": "List of associated receipt attachment IDs"
+        },
+        "reviewedBy": {
+          "type": "string",
+          "description": "UID of manager who reviewed"
+        },
+        "reviewedByName": {
+          "type": "string",
+          "description": "Name of reviewing manager"
+        },
+        "reviewedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Review timestamp"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Submission timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": ["id", "orgId", "branchId", "employeeId", "date", "period", "cashSales", "cardSales", "totalSales", "expenses", "remainingInBox", "netPeriod", "status", "createdAt"]
+    },
+    "Attachment": {
+      "title": "Attachment",
+      "description": "Invoice or POS receipt uploaded for a shift closing",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Attachment ID"
+        },
+        "orgId": {
+          "type": "string",
+          "description": "Organization ID"
+        },
+        "branchId": {
+          "type": "string",
+          "description": "Branch ID"
+        },
+        "closingId": {
+          "type": "string",
+          "description": "Associated shift closing ID"
+        },
+        "fileName": {
+          "type": "string",
+          "maxLength": 255,
+          "description": "Original file name"
+        },
+        "fileSize": {
+          "type": "number",
+          "description": "Size in bytes"
+        },
+        "mimeType": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "MIME content type"
+        },
+        "fileUrl": {
+          "type": "string",
+          "description": "Access URL"
+        },
+        "driveFileId": {
+          "type": "string",
+          "description": "Google Drive file ID"
+        },
+        "driveWebViewLink": {
+          "type": "string",
+          "description": "Google Drive view link"
+        },
+        "uploadedBy": {
+          "type": "string",
+          "description": "Uploader UID"
+        },
+        "uploadedByName": {
+          "type": "string",
+          "description": "Uploader name"
+        },
+        "uploadedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Upload timestamp"
+        }
+      },
+      "required": ["id", "orgId", "fileName", "uploadedBy", "uploadedAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable operational log entry for compliance",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Log entry unique ID"
+        },
+        "orgId": {
+          "type": "string",
+          "description": "Organization ID"
+        },
+        "actorId": {
+          "type": "string",
+          "description": "UID of user who performed action"
+        },
+        "actorName": {
+          "type": "string",
+          "description": "Name of actor"
+        },
+        "actorRole": {
+          "type": "string",
+          "enum": ["manager", "employee"],
+          "description": "Role of actor"
+        },
+        "action": {
+          "type": "string",
+          "description": "Action executed"
+        },
+        "targetType": {
+          "type": "string",
+          "enum": ["closing", "branch", "employee", "drive", "organization"],
+          "description": "Type of affected resource"
+        },
+        "targetId": {
+          "type": "string",
+          "description": "ID of target resource"
+        },
+        "details": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Descriptive details"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Action timestamp"
+        }
+      },
+      "required": ["id", "orgId", "actorId", "actorName", "actorRole", "action", "targetType", "targetId", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/organizations/{orgId}": {
+      "schema": "Organization",
+      "description": "Organization documents keyed by orgId"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profiles keyed by auth UID"
+    },
+    "/branches/{branchId}": {
+      "schema": "Branch",
+      "description": "Store branches belonging to an organization"
+    },
+    "/closings/{closingId}": {
+      "schema": "ShiftClosing",
+      "description": "Daily shift closings"
+    },
+    "/attachments/{attachmentId}": {
+      "schema": "Attachment",
+      "description": "Receipt and invoice attachment metadata"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Immutable administrative audit log events"
+    }
+  }
+}

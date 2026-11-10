@@ -83,6 +83,18 @@ export interface ShiftClosing {
   reviewedBy?: string;
   reviewedByName?: string;
   reviewedAt?: string;
+  correctionReason?: string;
+  correctedBy?: string;
+  correctedByName?: string;
+  correctedAt?: string;
+  previousValues?: {
+    cashSales: number;
+    cardSales: number;
+    expenses: number;
+    totalSales: number;
+    remainingInBox: number;
+    netPeriod: number;
+  };
   createdAt: string;
   updatedAt: string;
 }
@@ -114,6 +126,8 @@ export interface AuditLog {
   targetId: string;
   details: string;
   timestamp: string;
+  previousValues?: Record<string, any>;
+  newValues?: Record<string, any>;
 }
 
 export interface OrgSettings {

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import {
   X,
@@ -6,12 +7,11 @@ import {
   Building2,
   Mail,
   KeyRound,
-  Sparkles,
-  ArrowRight,
-  ArrowLeft,
   ShieldCheck,
+  AlertCircle,
   CheckCircle2,
-  AlertCircle
+  HelpCircle,
+  ArrowRight
 } from 'lucide-react';
 
 interface AuthModalProps {
@@ -28,70 +28,99 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onSuccess,
 }) => {
   const { t, direction } = useLanguage();
-  const [activeTab, setActiveTab] = useState<'manager' | 'employee' | 'register'>(initialTab);
+  const { loginWithGoogle, loginWithEmailPassword, resetPassword } = useAuth();
 
-  // Form states
+  const [activeTab, setActiveTab] = useState<'manager' | 'employee' | 'register'>(initialTab);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [orgName, setOrgName] = useState('');
-  const [activity, setActivity] = useState('restaurant');
-  const [currency, setCurrency] = useState('SAR');
-  const [firstBranch, setFirstBranch] = useState('الفرع الرئيسي');
   const [loading, setLoading] = useState(false);
-  const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
 
   if (!isOpen) return null;
 
+  // Localized error message mapper
+  const getFirebaseErrorMessage = (err: any): string => {
+    const code = err?.code || '';
+    switch (code) {
+      case 'auth/user-not-found':
+      case 'auth/wrong-password':
+      case 'auth/invalid-credential':
+        return 'بيانات الدخول غير صحيحة، يرجى التحقق من البريد الإلكتروني وكلمة المرور.';
+      case 'auth/email-already-in-use':
+        return 'البريد الإلكتروني مسجل مسبقاً في النظام.';
+      case 'auth/invalid-email':
+        return 'صيغة البريد الإلكتروني غير صالحة.';
+      case 'auth/weak-password':
+        return 'كلمة المرور ضعيفة جداً، يرجى استخدام 6 خانات على الأقل.';
+      case 'auth/popup-closed-by-user':
+        return 'تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.';
+      case 'auth/network-request-failed':
+        return 'تعذر الاتصال بالخادم السحابي. يرجى التحقق من اتصالك بالإنترنت.';
+      default:
+        return err?.message || 'حدث خطأ غير متوقع أثناء تسجيل الدخول.';
+    }
+  };
+
   const handleGoogleManagerSignIn = async () => {
     setLoading(true);
-    setInfoMessage(
-      'سيتم ربط حساب المدير بحساب Google الرسمي عند تفعيل إعدادات Firebase الخارجية.'
-    );
-    // Simulating initial setup readiness
-    setTimeout(() => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      await loginWithGoogle();
+      if (onSuccess) onSuccess('manager');
+      onClose();
+    } catch (err: any) {
+      setErrorMsg(getFirebaseErrorMessage(err));
+    } finally {
       setLoading(false);
-      if (onSuccess) {
-        onSuccess('manager', { email: 'manager@example.com', name: 'المدير العام' });
-      }
-    }, 1200);
+    }
   };
 
   const handleEmployeeLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) return;
     setLoading(true);
-    setInfoMessage('جاري التحقق من بيانات الموظف والفرع التابع له...');
-    setTimeout(() => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      await loginWithEmailPassword(email, password);
+      if (onSuccess) onSuccess('employee');
+      onClose();
+    } catch (err: any) {
+      setErrorMsg(getFirebaseErrorMessage(err));
+    } finally {
       setLoading(false);
-      if (onSuccess) {
-        onSuccess('employee', { email, name: 'موظف الصندوق' });
-      }
-    }, 1000);
+    }
   };
 
-  const handleRegisterOrg = async (e: React.FormEvent) => {
+  const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!orgName || !firstBranch) return;
+    if (!email) {
+      setErrorMsg('يرجى إدخال البريد الإلكتروني أولاً');
+      return;
+    }
     setLoading(true);
-    setInfoMessage('جاري تأسيس مساحة المؤسسة المنعزلة وإعداد الفرع الرئيسي...');
-    setTimeout(() => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      await resetPassword(email);
+      setSuccessMsg('تم إرسال رابط استعادة كلمة المرور إلى بريدك الإلكتروني بنجاح.');
+      setTimeout(() => {
+        setIsForgotPassword(false);
+      }, 4000);
+    } catch (err: any) {
+      setErrorMsg(getFirebaseErrorMessage(err));
+    } finally {
       setLoading(false);
-      if (onSuccess) {
-        onSuccess('manager', {
-          orgName,
-          firstBranch,
-          activity,
-          currency,
-          role: 'manager',
-        });
-      }
-    }, 1500);
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm transition-all animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm transition-all animate-in fade-in duration-200">
       <div
-        className="relative w-full max-w-lg bg-white dark:bg-[#0c1829] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden"
+        className="relative w-full max-w-lg bg-white dark:bg-[#0c1829] rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden"
         dir={direction}
       >
         {/* Modal Header */}
@@ -118,67 +147,115 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
 
         {/* Tab Switcher */}
-        <div className="grid grid-cols-3 p-2 bg-slate-100 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800 text-xs font-semibold">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('manager');
-              setInfoMessage(null);
-            }}
-            className={`py-2 rounded-lg transition-all ${
-              activeTab === 'manager'
-                ? 'bg-white dark:bg-[#0c1829] text-amber-600 dark:text-amber-400 shadow-sm'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            {t('authManagerTab')}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('employee');
-              setInfoMessage(null);
-            }}
-            className={`py-2 rounded-lg transition-all ${
-              activeTab === 'employee'
-                ? 'bg-white dark:bg-[#0c1829] text-amber-600 dark:text-amber-400 shadow-sm'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            {t('authEmployeeTab')}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('register');
-              setInfoMessage(null);
-            }}
-            className={`py-2 rounded-lg transition-all ${
-              activeTab === 'register'
-                ? 'bg-white dark:bg-[#0c1829] text-amber-600 dark:text-amber-400 shadow-sm'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            {t('authRegisterOrgTab')}
-          </button>
+        {!isForgotPassword && (
+          <div className="grid grid-cols-2 p-2 bg-slate-100 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('manager');
+                setErrorMsg(null);
+                setSuccessMsg(null);
+              }}
+              className={`py-2 rounded-lg transition-all ${
+                activeTab === 'manager' || activeTab === 'register'
+                  ? 'bg-white dark:bg-[#0c1829] text-amber-600 dark:text-amber-400 shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              {t('authManagerTab')}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('employee');
+                setErrorMsg(null);
+                setSuccessMsg(null);
+              }}
+              className={`py-2 rounded-lg transition-all ${
+                activeTab === 'employee'
+                  ? 'bg-white dark:bg-[#0c1829] text-amber-600 dark:text-amber-400 shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              {t('authEmployeeTab')}
+            </button>
+          </div>
+        )}
+
+        {/* Messages */}
+        <div className="px-6 pt-4">
+          {errorMsg && (
+            <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+          {successMsg && (
+            <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{successMsg}</span>
+            </div>
+          )}
         </div>
 
         {/* Tab Contents */}
         <div className="p-6 space-y-5">
-          {/* Manager Login Tab */}
-          {activeTab === 'manager' && (
+          {isForgotPassword ? (
+            /* Forgot Password Form */
+            <form onSubmit={handleResetPassword} className="space-y-4">
+              <div className="text-xs text-slate-600 dark:text-slate-300">
+                أدخل بريدك الإلكتروني المسجل وسنرسل لك رابطاً لإعادة تعيين كلمة المرور فوراً عبر Firebase Auth.
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {t('authEmail')}
+                </label>
+                <div className="relative">
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="name@store.com"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                  />
+                  <Mail className="w-4 h-4 text-slate-400 absolute end-3 top-3" />
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 py-3 rounded-xl font-bold text-xs text-slate-950 bg-amber-400 hover:bg-amber-300 transition-all active:scale-98 disabled:opacity-50"
+                >
+                  {loading ? 'جاري الإرسال...' : 'إرسال رابط الاستعادة'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsForgotPassword(false)}
+                  className="px-4 py-3 rounded-xl font-medium text-xs text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </form>
+          ) : (activeTab === 'manager' || activeTab === 'register') ? (
+            /* Manager Google Login & Onboarding */
             <div className="space-y-4">
               <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-2.5">
                 <ShieldCheck className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                <p className="leading-relaxed">{t('authNoticeManager')}</p>
+                <p className="leading-relaxed">
+                  يتم تسجيل دخول المدير بواسطة حساب Google الرسمي. إذا كنت تسجل لأول مرة، سيتم نقلك تلقائياً لتأسيس مؤسستك التجارية الجديدة وفرعك الرئيسي.
+                </p>
               </div>
 
-              {/* Official Google Sign In Button */}
               <button
                 type="button"
                 onClick={handleGoogleManagerSignIn}
                 disabled={loading}
-                className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#070e17] hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-800 dark:text-white text-sm font-semibold shadow-sm hover:shadow transition-all active:scale-98 disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-3 py-3.5 px-4 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#070e17] hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-sm font-bold shadow-sm hover:shadow transition-all active:scale-98 disabled:opacity-50"
               >
                 <svg className="w-5 h-5 shrink-0" viewBox="0 0 48 48">
                   <path
@@ -198,17 +275,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
                   />
                 </svg>
-                <span>{loading ? 'جاري التحقق...' : t('authGoogleSignIn')}</span>
+                <span>{loading ? 'جاري الاتصال بـ Firebase...' : t('authGoogleSignIn')}</span>
               </button>
 
               <div className="text-center text-xs text-slate-500 dark:text-slate-400">
-                {t('authGoogleSub')}
+                {t('authNoticeManager')}
               </div>
             </div>
-          )}
-
-          {/* Employee Login Tab */}
-          {activeTab === 'employee' && (
+          ) : (
+            /* Employee Login */
             <form onSubmit={handleEmployeeLogin} className="space-y-4">
               <div className="p-3.5 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
@@ -233,9 +308,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  {t('authPassword')}
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    {t('authPassword')}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsForgotPassword(true);
+                      setErrorMsg(null);
+                    }}
+                    className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
+                  >
+                    نسيت كلمة المرور؟
+                  </button>
+                </div>
                 <div className="relative">
                   <input
                     type="password"
@@ -252,99 +339,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3 rounded-xl font-bold text-sm text-slate-950 bg-amber-400 hover:bg-amber-300 transition-all active:scale-98 shadow-sm"
+                className="w-full py-3.5 rounded-xl font-bold text-sm text-slate-950 bg-amber-400 hover:bg-amber-300 transition-all active:scale-98 shadow-sm disabled:opacity-50"
               >
-                {loading ? 'جاري التحقق...' : t('authSubmitLogin')}
+                {loading ? 'جاري التحقق والدخول...' : t('authSubmitLogin')}
               </button>
             </form>
-          )}
-
-          {/* Register New Organization Tab */}
-          {activeTab === 'register' && (
-            <form onSubmit={handleRegisterOrg} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  {t('authOrgName')} *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={orgName}
-                  onChange={(e) => setOrgName(e.target.value)}
-                  placeholder="مثال: مطاعم ومقاهي السعادة"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    {t('authActivity')}
-                  </label>
-                  <select
-                    value={activity}
-                    onChange={(e) => setActivity(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
-                  >
-                    <option value="restaurant">{t('authActivityOptions').restaurant}</option>
-                    <option value="retail">{t('authActivityOptions').retail}</option>
-                    <option value="supermarket">{t('authActivityOptions').supermarket}</option>
-                    <option value="services">{t('authActivityOptions').services}</option>
-                    <option value="other">{t('authActivityOptions').other}</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    {t('authCurrency')}
-                  </label>
-                  <select
-                    value={currency}
-                    onChange={(e) => setCurrency(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
-                  >
-                    <option value="SAR">SAR - ريال سعودي</option>
-                    <option value="AED">AED - درهم إماراتي</option>
-                    <option value="QAR">QAR - ريال قطري</option>
-                    <option value="KWD">KWD - دينار كويتي</option>
-                    <option value="USD">USD - دولار أمريكي</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  {t('authFirstBranch')} *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={firstBranch}
-                  onChange={(e) => setFirstBranch(e.target.value)}
-                  placeholder="مثال: فرع التحلية الرئيسي"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
-                />
-              </div>
-
-              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300">
-                {t('authDriveInfo')}
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-3 rounded-xl font-bold text-sm text-slate-950 bg-amber-400 hover:bg-amber-300 transition-all active:scale-98 shadow-sm flex items-center justify-center gap-2"
-              >
-                <Building2 className="w-4 h-4" />
-                <span>{loading ? 'جاري التأسيس...' : t('authSubmitRegister')}</span>
-              </button>
-            </form>
-          )}
-
-          {infoMessage && (
-            <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700">
-              {infoMessage}
-            </div>
           )}
         </div>
       </div>

@@ -1,0 +1,369 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function hasValidUserDoc() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Must be an active user in the organization (blocks disabled employees from read & write)
+    function isOrgMember(targetOrgId) {
+      return hasValidUserDoc() &&
+        getUserData().isActive == true &&
+        getUserData().orgId == targetOrgId;
+    }
+
+    // Must be an active manager in the organization
+    function isOrgManager(targetOrgId) {
+      return hasValidUserDoc() &&
+        getUserData().isActive == true &&
+        getUserData().orgId == targetOrgId &&
+        getUserData().role == 'manager';
+    }
+
+    // Organizations Collection
+    match /organizations/{orgId} {
+      allow get: if isSignedIn() && isValidId(orgId) && (
+        isOrgMember(orgId) ||
+        resource.data.ownerId == request.auth.uid
+      );
+
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+
+      allow create: if isSignedIn() && isValidId(orgId) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().name is string && incoming().name.size() >= 2 && incoming().name.size() <= 120 &&
+        incoming().currency in ['SAR', 'AED', 'QAR', 'KWD', 'USD'];
+
+      allow update: if isSignedIn() && isValidId(orgId) &&
+        isOrgManager(orgId) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().id == existing().id;
+
+      allow delete: if false;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (
+        request.auth.uid == userId ||
+        (hasValidUserDoc() && isOrgManager(existing().orgId))
+      );
+
+      allow list: if isSignedIn() && hasValidUserDoc() && (
+        isOrgManager(resource.data.orgId) ||
+        resource.data.uid == request.auth.uid
+      );
+
+      // Self registration during initial onboarding (as manager of their new org) OR active manager provisioning an employee
+      allow create: if isSignedIn() && isValidId(userId) && (
+        (
+          request.auth.uid == userId &&
+          incoming().uid == request.auth.uid &&
+          incoming().role == 'manager' &&
+          existsAfter(/databases/$(database)/documents/organizations/$(incoming().orgId)) &&
+          getAfter(/databases/$(database)/documents/organizations/$(incoming().orgId)).data.ownerId == request.auth.uid
+        ) ||
+        (hasValidUserDoc() && isOrgManager(incoming().orgId) && incoming().role == 'employee')
+      );
+
+      // Prevent role, orgId, branchId, and isActive tampering
+      allow update: if isSignedIn() && isValidId(userId) && (
+        // Case 1: Employee self-updating display name or phone only (CANNOT change role, orgId, branchId, or isActive)
+        (
+          request.auth.uid == userId &&
+          incoming().role == existing().role &&
+          incoming().orgId == existing().orgId &&
+          incoming().branchId == existing().branchId &&
+          incoming().isActive == existing().isActive
+        ) ||
+        // Case 2: Manager updating employee's branch, permissions, or isActive status
+        (
+          hasValidUserDoc() &&
+          isOrgManager(existing().orgId) &&
+          incoming().orgId == existing().orgId
+        )
+      );
+
+      allow delete: if false;
+    }
+
+    // Branches Collection
+    match /branches/{branchId} {
+      allow get: if isSignedIn() && isValidId(branchId) && isOrgMember(resource.data.orgId);
+      allow list: if isSignedIn() && hasValidUserDoc() && resource.data.orgId == getUserData().orgId;
+
+      allow create: if isSignedIn() && isValidId(branchId) && (
+        (hasValidUserDoc() && isOrgManager(incoming().orgId)) ||
+        (
+          existsAfter(/databases/$(database)/documents/organizations/$(incoming().orgId)) &&
+          getAfter(/databases/$(database)/documents/organizations/$(incoming().orgId)).data.ownerId == request.auth.uid
+        )
+      );
+
+      allow update: if isSignedIn() && isValidId(branchId) &&
+        isOrgManager(existing().orgId) &&
+        incoming().orgId == existing().orgId;
+
+      allow delete: if false;
+    }
+
+    // Shift Closings Collection
+    match /closings/{closingId} {
+      allow get: if isSignedIn() && isValidId(closingId) && isOrgMember(resource.data.orgId);
+      allow list: if isSignedIn() && hasValidUserDoc() && resource.data.orgId == getUserData().orgId;
+
+      allow create: if isSignedIn() && isValidId(closingId) &&
+        isOrgMember(incoming().orgId) &&
+        incoming().employeeId == request.auth.uid &&
+        incoming().period in ['morning', 'evening'] &&
+        incoming().cashSales >= 0 &&
+        incoming().cardSales >= 0 &&
+        incoming().expenses >= 0 &&
+        incoming().status in ['draft', 'pending_review'];
+
+      // Closings Update Rules:
+      // Case 1: Non-approved closings (Review by manager OR draft update by employee)
+      // Case 2: Free Spark Administrative Correction on approved closings (ACTIVE MANAGER ONLY with strict mathematical and audit checks)
+      allow update: if isSignedIn() && isValidId(closingId) && isOrgMember(existing().orgId) && (
+        // Scenario A: Non-approved closings
+        (
+          existing().status != 'approved' && (
+            // Manager approving or rejecting a pending closing
+            (
+              isOrgManager(existing().orgId) &&
+              incoming().orgId == existing().orgId &&
+              incoming().branchId == existing().branchId &&
+              incoming().employeeId == existing().employeeId &&
+              incoming().date == existing().date &&
+              incoming().period == existing().period &&
+              incoming().createdAt == existing().createdAt &&
+              incoming().status in ['approved', 'rejected']
+            ) ||
+            // Employee updating their draft or resubmitting rejected closing
+            (
+              existing().employeeId == request.auth.uid &&
+              incoming().employeeId == existing().employeeId &&
+              incoming().orgId == existing().orgId &&
+              incoming().branchId == existing().branchId &&
+              incoming().date == existing().date &&
+              incoming().period == existing().period &&
+              incoming().createdAt == existing().createdAt &&
+              incoming().status in ['draft', 'pending_review']
+            )
+          )
+        ) ||
+        // Scenario B: Documented Administrative Correction on Approved Closing (ACTIVE MANAGER ONLY)
+        (
+          existing().status == 'approved' &&
+          incoming().status == 'approved' &&
+          isOrgManager(existing().orgId) &&
+          // Historical fields are strictly IMMUTABLE:
+          incoming().orgId == existing().orgId &&
+          incoming().branchId == existing().branchId &&
+          incoming().employeeId == existing().employeeId &&
+          incoming().date == existing().date &&
+          incoming().period == existing().period &&
+          incoming().createdAt == existing().createdAt &&
+          // Actor authentication check
+          incoming().correctedBy == request.auth.uid &&
+          // Mandatory reason (at least 5 characters)
+          incoming().correctionReason is string && incoming().correctionReason.size() >= 5 &&
+          // Previous values map MUST match genuine previous values on server
+          incoming().previousValues is map &&
+          incoming().previousValues.cashSales == existing().cashSales &&
+          incoming().previousValues.cardSales == existing().cardSales &&
+          incoming().previousValues.expenses == existing().expenses &&
+          incoming().previousValues.totalSales == existing().totalSales &&
+          // Strict Mathematical Accounting verification in Halalas:
+          incoming().cashSales is number && incoming().cashSales >= 0 &&
+          incoming().cardSales is number && incoming().cardSales >= 0 &&
+          incoming().expenses is number && incoming().expenses >= 0 &&
+          incoming().totalSales == incoming().cashSales + incoming().cardSales &&
+          incoming().remainingInBox == incoming().cashSales - incoming().expenses &&
+          incoming().netPeriod == (incoming().cashSales + incoming().cardSales) - incoming().expenses
+        )
+      );
+
+      allow delete: if false;
+    }
+
+    // Attachments Collection (Least Privilege: Employee reads ONLY their own uploads)
+    match /attachments/{attachmentId} {
+      allow get: if isSignedIn() && isValidId(attachmentId) && (
+        isOrgManager(resource.data.orgId) ||
+        (
+          isOrgMember(resource.data.orgId) &&
+          resource.data.uploadedBy == request.auth.uid
+        )
+      );
+
+      allow list: if isSignedIn() && hasValidUserDoc() && (
+        isOrgManager(resource.data.orgId) ||
+        (
+          isOrgMember(resource.data.orgId) &&
+          resource.data.uploadedBy == request.auth.uid
+        )
+      );
+
+      allow create: if isSignedIn() && isValidId(attachmentId) &&
+        isOrgMember(incoming().orgId) &&
+        incoming().uploadedBy == request.auth.uid &&
+        incoming().orgId == getUserData().orgId &&
+        // Employee can only upload for their own assigned branch
+        (getUserData().role == 'manager' || incoming().branchId == getUserData().branchId);
+
+      // Attachments are strictly immutable once uploaded
+      allow update: if false;
+
+      allow delete: if isSignedIn() && isValidId(attachmentId) && (
+        isOrgManager(existing().orgId) ||
+        existing().uploadedBy == request.auth.uid
+      );
+    }
+
+    // Audit Logs Collection (Anti-Forgery & Completely Immutable)
+    match /auditLogs/{logId} {
+      allow get: if isSignedIn() && isValidId(logId) && isOrgManager(resource.data.orgId);
+      allow list: if isSignedIn() && hasValidUserDoc() && isOrgManager(resource.data.orgId);
+
+      allow create: if isSignedIn() && isValidId(logId) &&
+        incoming().actorId == request.auth.uid &&
+        incoming().actorName is string && incoming().actorName.size() >= 2 && incoming().actorName.size() <= 100 &&
+        incoming().details is string && incoming().details.size() >= 5 && incoming().details.size() <= 1000 &&
+        incoming().targetType in ['closing', 'branch', 'employee', 'organization'] &&
+        incoming().targetId is string && isValidId(incoming().targetId) && (
+          // Case 1: Initial Organization Establishment (Batch write by owner before user document existed)
+          (
+            incoming().action == 'ORGANIZATION_ESTABLISHED' &&
+            incoming().actorRole == 'manager' &&
+            incoming().targetType == 'organization' &&
+            incoming().targetId == incoming().orgId &&
+            !exists(/databases/$(database)/documents/organizations/$(incoming().targetId)) &&
+            existsAfter(/databases/$(database)/documents/organizations/$(incoming().targetId)) &&
+            getAfter(/databases/$(database)/documents/organizations/$(incoming().targetId)).data.ownerId == request.auth.uid &&
+            existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+            getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.orgId == incoming().orgId &&
+            getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'manager'
+          ) ||
+          // Case 2: Established member operations (requires existing active user document before the operation)
+          (
+            hasValidUserDoc() &&
+            isOrgMember(incoming().orgId) &&
+            incoming().actorRole == getUserData().role &&
+            incoming().orgId == getUserData().orgId && (
+              // Employee can ONLY log legitimate shift submission or draft saving on closings,
+              // with relational atomicity to the corresponding closing document
+              (
+                getUserData().role == 'employee' &&
+                incoming().actorRole == 'employee' &&
+                incoming().action in ['CLOSING_SUBMITTED_FOR_REVIEW', 'CLOSING_DRAFT_SAVED'] &&
+                incoming().targetType == 'closing' &&
+                getAfter(/databases/$(database)/documents/closings/$(incoming().targetId)).data.employeeId == request.auth.uid
+              ) ||
+              // Administrative actions strictly require active verified manager,
+              // and are relationally tied to state transitions between get() and getAfter()
+              (
+                isOrgManager(incoming().orgId) &&
+                incoming().actorRole == 'manager' && (
+                  // 1. Approval: target closing MUST transition from 'pending_review' to 'approved' by this manager
+                  (
+                    incoming().action == 'CLOSING_APPROVED' &&
+                    incoming().targetType == 'closing' &&
+                    get(/databases/$(database)/documents/closings/$(incoming().targetId)).data.status == 'pending_review' &&
+                    getAfter(/databases/$(database)/documents/closings/$(incoming().targetId)).data.status == 'approved' &&
+                    getAfter(/databases/$(database)/documents/closings/$(incoming().targetId)).data.reviewedBy == request.auth.uid &&
+                    getAfter(/databases/$(database)/documents/closings/$(incoming().targetId)).data.orgId == getUserData().orgId
+                  ) ||
+                  // 2. Rejection: target closing MUST transition from 'pending_review' to 'rejected' by this manager
+                  (
+                    incoming().action == 'CLOSING_REJECTED_FOR_REVISION' &&
+                    incoming().targetType == 'closing' &&
+                    get(/databases/$(database)/documents/closings/$(incoming().targetId)).data.status == 'pending_review' &&
+                    getAfter(/databases/$(database)/documents/closings/$(incoming().targetId)).data.status == 'rejected' &&
+                    getAfter(/databases/$(database)/documents/closings/$(incoming().targetId)).data.reviewedBy == request.auth.uid &&
+                    getAfter(/databases/$(database)/documents/closings/$(incoming().targetId)).data.orgId == getUserData().orgId
+                  ) ||
+                  // 3. Branch Creation: target branch must NOT exist before, and MUST exist after and belong to org
+                  (
+                    incoming().action == 'BRANCH_CREATED' &&
+                    incoming().targetType == 'branch' &&
+                    !exists(/databases/$(database)/documents/branches/$(incoming().targetId)) &&
+                    existsAfter(/databases/$(database)/documents/branches/$(incoming().targetId)) &&
+                    getAfter(/databases/$(database)/documents/branches/$(incoming().targetId)).data.orgId == getUserData().orgId
+                  ) ||
+                  // 4. Employee Provisioning: target user must NOT exist before, and MUST exist after as employee in org
+                  (
+                    incoming().action == 'EMPLOYEE_PROVISIONED' &&
+                    incoming().targetType == 'employee' &&
+                    !exists(/databases/$(database)/documents/users/$(incoming().targetId)) &&
+                    existsAfter(/databases/$(database)/documents/users/$(incoming().targetId)) &&
+                    getAfter(/databases/$(database)/documents/users/$(incoming().targetId)).data.orgId == getUserData().orgId &&
+                    getAfter(/databases/$(database)/documents/users/$(incoming().targetId)).data.role == 'employee'
+                  ) ||
+                  // 5. Employee Activation: target user MUST transition from isActive == false to isActive == true
+                  (
+                    incoming().action == 'EMPLOYEE_ACTIVATED' &&
+                    incoming().targetType == 'employee' &&
+                    get(/databases/$(database)/documents/users/$(incoming().targetId)).data.isActive == false &&
+                    getAfter(/databases/$(database)/documents/users/$(incoming().targetId)).data.isActive == true &&
+                    getAfter(/databases/$(database)/documents/users/$(incoming().targetId)).data.orgId == getUserData().orgId
+                  ) ||
+                  // 6. Employee Disabling: target user MUST transition from isActive == true to isActive == false
+                  (
+                    incoming().action == 'EMPLOYEE_DISABLED' &&
+                    incoming().targetType == 'employee' &&
+                    get(/databases/$(database)/documents/users/$(incoming().targetId)).data.isActive == true &&
+                    getAfter(/databases/$(database)/documents/users/$(incoming().targetId)).data.isActive == false &&
+                    getAfter(/databases/$(database)/documents/users/$(incoming().targetId)).data.orgId == getUserData().orgId
+                  ) ||
+                  // 7. Administrative Correction: target closing MUST be approved before and after, with actor verified as corrector
+                  (
+                    incoming().action == 'CLOSING_ADMIN_CORRECTED' &&
+                    incoming().targetType == 'closing' &&
+                    exists(/databases/$(database)/documents/closings/$(incoming().targetId)) &&
+                    get(/databases/$(database)/documents/closings/$(incoming().targetId)).data.status == 'approved' &&
+                    getAfter(/databases/$(database)/documents/closings/$(incoming().targetId)).data.status == 'approved' &&
+                    getAfter(/databases/$(database)/documents/closings/$(incoming().targetId)).data.correctedBy == request.auth.uid &&
+                    getAfter(/databases/$(database)/documents/closings/$(incoming().targetId)).data.orgId == getUserData().orgId &&
+                    incoming().previousValues is map &&
+                    incoming().newValues is map
+                  )
+                )
+              )
+            )
+          )
+        );
+
+      // STRICT IMMUTABILITY: No one can ever edit or delete an audit log
+      allow update, delete: if false;
+    }
+  }
+}
