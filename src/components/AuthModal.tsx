@@ -44,6 +44,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const getFirebaseErrorMessage = (err: any): string => {
     const code = err?.code || '';
     switch (code) {
+      case 'auth/unauthorized-domain':
+        return 'النطاق (amoal2030.github.io) غير مضاف إلى النطاقات المعتمدة (Authorized domains) في Firebase Authentication. يلزم إضافته من Firebase Console لتفعيل تسجيل الدخول على GitHub Pages.';
+      case 'auth/popup-blocked':
+        return 'قام المتصفح بحظر النافذة المنبثقة. يرجى السماح بالنوافذ المنبثقة في إعدادات متصفحك أو إعادة المحاولة.';
+      case 'auth/operation-not-allowed':
+        return 'طريقة تسجيل الدخول (Google أو البريد) غير مفعلة في Firebase Console. يرجى تفعيلها من Sign-in method.';
+      case 'auth/too-many-requests':
+        return 'تم حظر المحاولات مؤقتاً لكثرة الطلبات. يرجى الانتظار دقيقة واحدة ثم المحاولة.';
+      case 'auth/user-disabled':
+        return 'تم تعطيل هذا الحساب من قِبل إدارة المنظومة.';
       case 'auth/user-not-found':
       case 'auth/wrong-password':
       case 'auth/invalid-credential':
@@ -55,7 +65,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       case 'auth/weak-password':
         return 'كلمة المرور ضعيفة جداً، يرجى استخدام 6 خانات على الأقل.';
       case 'auth/popup-closed-by-user':
-        return 'تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.';
+        return 'تم إغلاق نافذة تسجيل الدخول قبل استكمال المصادقة. يرجى المحاولة مجدداً.';
       case 'auth/network-request-failed':
         return 'تعذر الاتصال بالخادم السحابي. يرجى التحقق من اتصالك بالإنترنت.';
       default:
@@ -118,29 +128,30 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm transition-all animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/75 backdrop-blur-sm transition-all animate-in fade-in duration-200">
       <div
-        className="relative w-full max-w-lg bg-white dark:bg-[#0c1829] rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden"
+        className="relative w-full max-w-lg max-h-[92vh] flex flex-col bg-white dark:bg-[#0c1829] rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden"
         dir={direction}
       >
         {/* Modal Header */}
-        <div className="p-6 pb-4 border-b border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#0b192c] border border-amber-500/30 text-amber-400 flex items-center justify-center">
-              <Lock className="w-5 h-5" />
+        <div className="shrink-0 p-4 sm:p-6 pb-3 sm:pb-4 border-b border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#0b192c] border border-amber-500/30 text-amber-400 flex items-center justify-center shrink-0">
+              <Lock className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+              <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white leading-tight">
                 {t('authModalTitle')}
               </h3>
-              <span className="text-xs text-slate-500 dark:text-slate-400">
+              <span className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400">
                 {t('brandName')} | {t('brandSub')}
               </span>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center"
+            aria-label="إغلاق النافذة"
           >
             <X className="w-5 h-5" />
           </button>
@@ -148,7 +159,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
         {/* Tab Switcher */}
         {!isForgotPassword && (
-          <div className="grid grid-cols-2 p-2 bg-slate-100 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800 text-xs font-semibold">
+          <div className="shrink-0 grid grid-cols-2 p-1.5 sm:p-2 bg-slate-100 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800 text-xs font-semibold">
             <button
               type="button"
               onClick={() => {
@@ -156,9 +167,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 setErrorMsg(null);
                 setSuccessMsg(null);
               }}
-              className={`py-2 rounded-lg transition-all ${
+              className={`py-2 rounded-lg transition-all min-h-[36px] ${
                 activeTab === 'manager' || activeTab === 'register'
-                  ? 'bg-white dark:bg-[#0c1829] text-amber-600 dark:text-amber-400 shadow-sm'
+                  ? 'bg-white dark:bg-[#0c1829] text-amber-600 dark:text-amber-400 shadow-sm font-bold'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
@@ -171,9 +182,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 setErrorMsg(null);
                 setSuccessMsg(null);
               }}
-              className={`py-2 rounded-lg transition-all ${
+              className={`py-2 rounded-lg transition-all min-h-[36px] ${
                 activeTab === 'employee'
-                  ? 'bg-white dark:bg-[#0c1829] text-amber-600 dark:text-amber-400 shadow-sm'
+                  ? 'bg-white dark:bg-[#0c1829] text-amber-600 dark:text-amber-400 shadow-sm font-bold'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
@@ -182,12 +193,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
         )}
 
-        {/* Messages */}
-        <div className="px-6 pt-4">
+        {/* Scrollable Modal Content */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-5">
+          {/* Messages */}
           {errorMsg && (
             <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{errorMsg}</span>
+              <div className="space-y-1">
+                <span>{errorMsg}</span>
+                {errorMsg.includes('amoal2030.github.io') && (
+                  <div className="pt-2 mt-2 border-t border-rose-500/20 text-[11px] font-mono text-rose-700 dark:text-rose-300">
+                    النطاق المطلوب إضافته: <span className="font-bold underline select-all">amoal2030.github.io</span>
+                  </div>
+                )}
+              </div>
             </div>
           )}
           {successMsg && (
@@ -196,10 +215,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <span>{successMsg}</span>
             </div>
           )}
-        </div>
-
-        {/* Tab Contents */}
-        <div className="p-6 space-y-5">
           {isForgotPassword ? (
             /* Forgot Password Form */
             <form onSubmit={handleResetPassword} className="space-y-4">

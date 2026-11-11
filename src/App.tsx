@@ -23,9 +23,48 @@ const AppContent: React.FC = () => {
   const [authInitialTab, setAuthInitialTab] = useState<'manager' | 'employee' | 'register'>('manager');
   const [showPhasesOverview, setShowPhasesOverview] = useState(false);
 
+  // Synchronize URL hash (#login, #register, ?login=true) for direct navigation
+  React.useEffect(() => {
+    const handleUrlAuth = () => {
+      const hash = window.location.hash;
+      const search = new URLSearchParams(window.location.search);
+      if (
+        hash === '#login' ||
+        hash === '#auth' ||
+        hash === '#register' ||
+        search.get('login') !== null ||
+        search.get('auth') !== null
+      ) {
+        const tab =
+          hash === '#register' || search.get('tab') === 'register'
+            ? 'register'
+            : search.get('role') === 'employee' || hash === '#employee'
+            ? 'employee'
+            : 'manager';
+        setAuthInitialTab(tab);
+        setAuthModalOpen(true);
+      }
+    };
+
+    handleUrlAuth();
+    window.addEventListener('hashchange', handleUrlAuth);
+    return () => window.removeEventListener('hashchange', handleUrlAuth);
+  }, []);
+
   const handleOpenAuth = (tab: 'manager' | 'employee' | 'register') => {
     setAuthInitialTab(tab);
     setAuthModalOpen(true);
+  };
+
+  const handleCloseAuth = () => {
+    setAuthModalOpen(false);
+    if (window.location.hash === '#login' || window.location.hash === '#auth' || window.location.hash === '#register') {
+      try {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      } catch (e) {
+        // Safe fallback
+      }
+    }
   };
 
   // Global Loading State
@@ -101,7 +140,7 @@ const AppContent: React.FC = () => {
       <AuthModal
         isOpen={authModalOpen}
         initialTab={authInitialTab}
-        onClose={() => setAuthModalOpen(false)}
+        onClose={handleCloseAuth}
       />
 
       {/* Phase 2 Operational Floating Badge */}

@@ -10,6 +10,8 @@ import {
 } from '../lib/firebase';
 import {
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
@@ -123,6 +125,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   useEffect(() => {
+    // Process redirect sign-in result if returning from a mobile redirect flow
+    getRedirectResult(auth)
+      .then(async (result) => {
+        if (result?.user) {
+          setCurrentUser(result.user);
+          await loadUserData(result.user);
+        }
+      })
+      .catch((error) => {
+        console.warn('Redirect sign-in resolution notice:', error?.message);
+      });
+
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       setCurrentUser(fbUser);
       if (fbUser) {
@@ -327,7 +341,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await loadUserData(result.user);
       }
     } catch (error: any) {
-      console.error('Google sign-in error:', error);
+      console.warn('Google sign-in attempt warning:', error?.code, error?.message);
+      // Fallback for mobile devices where popup blocker is active
+      if (error?.code === 'auth/popup-blocked') {
+        console.info('Popup was blocked by mobile browser. Falling back to signInWithRedirect...');
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch (redirectErr) {
+          console.error('Redirect sign-in error:', redirectErr);
+          throw redirectErr;
+        }
+      }
       throw error;
     } finally {
       setLoading(false);

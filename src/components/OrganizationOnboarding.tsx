@@ -55,19 +55,19 @@ export const OrganizationOnboarding: React.FC = () => {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md" dir={direction}>
-      <div className="w-full max-w-2xl bg-white dark:bg-[#0c1829] rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden transition-all">
+      <div className="w-full max-w-2xl bg-white dark:bg-[#0c1829] rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden transition-all">
         {/* Header Banner */}
-        <div className="bg-gradient-to-r from-[#0b192c] via-[#0f2038] to-[#1e293b] p-6 sm:p-8 text-white relative border-b border-amber-500/20">
+        <div className="bg-gradient-to-r from-[#0b192c] via-[#0f2038] to-[#1e293b] p-4 sm:p-8 text-white relative border-b border-amber-500/20">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center font-bold">
-                <Building2 className="w-6 h-6" />
+            <div className="flex items-center gap-2.5 sm:gap-3">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center font-bold shrink-0">
+                <Building2 className="w-5 h-5 sm:w-6 sm:h-6" />
               </div>
               <div>
-                <span className="text-xs font-semibold uppercase tracking-wider text-amber-400">
+                <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-amber-400">
                   {t('badgeCloudSaaS')}
                 </span>
-                <h2 className="text-xl sm:text-2xl font-black">
+                <h2 className="text-base sm:text-2xl font-black">
                   تأسيس المؤسسة التجارية الجديدة
                 </h2>
               </div>
@@ -88,7 +88,7 @@ export const OrganizationOnboarding: React.FC = () => {
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-6 sm:p-8 space-y-6">
+        <form onSubmit={handleSubmit} className="p-4 sm:p-8 space-y-5 sm:space-y-6">
           {errorMsg && (
             <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs sm:text-sm flex items-start gap-3">
               <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />

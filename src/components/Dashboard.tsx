@@ -59,38 +59,38 @@ export const Dashboard: React.FC = () => {
     <div className="min-h-screen bg-slate-50 dark:bg-[#070e17] text-slate-900 dark:text-slate-100" dir={direction}>
       {/* Top Organization Header */}
       <header className="bg-white dark:bg-[#0c1829] border-b border-slate-200 dark:border-slate-800 shadow-sm sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-20">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16 sm:h-20">
             {/* Org Badge & Name */}
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-[#0b192c] border border-amber-500/40 text-amber-400 flex items-center justify-center font-bold shadow-md">
-                <Building2 className="w-5 h-5" />
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl bg-[#0b192c] border border-amber-500/40 text-amber-400 flex items-center justify-center font-bold shadow-md shrink-0">
+                <Building2 className="w-4 h-4 sm:w-5 sm:h-5" />
               </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  <h1 className="text-sm sm:text-lg font-bold text-slate-900 dark:text-white truncate max-w-[120px] xs:max-w-[170px] sm:max-w-none">
                     {currentOrg?.name || 'مؤسستي التجارية'}
                   </h1>
                   <span
-                    className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
+                    className={`text-[10px] sm:text-[11px] font-semibold px-1.5 sm:px-2 py-0.5 rounded-full border shrink-0 ${
                       isManager
                         ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30'
                         : 'bg-sky-500/15 text-sky-400 border-sky-500/30'
                     }`}
                   >
-                    {isManager ? 'المدير العام' : 'موظف الصندوق'}
+                    {isManager ? 'المدير' : 'موظف'}
                   </span>
                 </div>
-                <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
-                  <span>الفرع: {currentBranch?.name || 'الفرع الرئيسي'}</span>
+                <div className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5 truncate">
+                  <span className="truncate">{currentBranch?.name || 'الفرع الرئيسي'}</span>
                   <span>•</span>
-                  <span>العملة: {currentOrg?.currency || 'SAR'}</span>
+                  <span>{currentOrg?.currency || 'SAR'}</span>
                 </div>
               </div>
             </div>
 
             {/* Header Controls: Theme, Language, Profile & Logout */}
-            <div className="flex items-center gap-2 sm:gap-3">
+            <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
               {/* Theme Toggle Button */}
               <button
                 type="button"

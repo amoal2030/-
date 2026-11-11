@@ -139,14 +139,22 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
               </p>
 
               {/* Action Buttons */}
-              <div className="flex flex-wrap items-center justify-center lg:justify-start gap-3 sm:gap-4 pt-2">
+              <div className="flex flex-wrap items-center justify-center lg:justify-start gap-2.5 sm:gap-4 pt-2">
                 <button
                   onClick={() => onOpenAuth('register')}
-                  className="px-6 py-3.5 rounded-xl font-bold text-sm sm:text-base text-slate-950 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 shadow-lg shadow-amber-500/25 hover:shadow-amber-500/35 active:scale-95 transition-all flex items-center gap-2"
+                  className="px-5 sm:px-6 py-3.5 rounded-xl font-bold text-xs sm:text-base text-slate-950 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 shadow-lg shadow-amber-500/25 hover:shadow-amber-500/35 active:scale-95 transition-all flex items-center gap-2"
                 >
-                  <Building2 className="w-5 h-5 text-slate-950" />
+                  <Building2 className="w-4 h-4 sm:w-5 sm:h-5 text-slate-950" />
                   <span>{t('ctaStartNow')}</span>
                   {direction === 'rtl' ? <ArrowLeft className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
+                </button>
+
+                <button
+                  onClick={() => onOpenAuth('manager')}
+                  className="px-5 sm:px-6 py-3.5 rounded-xl font-bold text-xs sm:text-base text-slate-900 dark:text-white bg-white dark:bg-[#0c1829] hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 shadow-sm transition-all flex items-center gap-2 active:scale-95"
+                >
+                  <Lock className="w-4 h-4 text-amber-500" />
+                  <span>{t('navLogin')}</span>
                 </button>
 
                 <button
@@ -154,7 +162,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
                     const el = document.getElementById('simulator');
                     if (el) el.scrollIntoView({ behavior: 'smooth' });
                   }}
-                  className="px-6 py-3.5 rounded-xl font-semibold text-sm sm:text-base text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800/90 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 shadow-sm transition-all flex items-center gap-2"
+                  className="px-4 sm:px-5 py-3.5 rounded-xl font-semibold text-xs sm:text-sm text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700/80 shadow-sm transition-all flex items-center gap-1.5"
                 >
                   <Sparkles className="w-4 h-4 text-amber-500" />
                   <span>{t('ctaExploreDemo')}</span>

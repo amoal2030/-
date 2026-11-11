@@ -79,135 +79,135 @@ export const ManagerOverview: React.FC<ManagerOverviewProps> = ({ onNavigateTab 
       </div>
 
       {/* 10 Required KPI Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3.5">
         {/* 1. Total Sales */}
-        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
+        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-3 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
           <div className="absolute top-0 inset-x-0 h-1 bg-amber-500" />
-          <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1">
+          <span className="text-[10px] sm:text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1 truncate">
             إجمالي المبيعات
           </span>
-          <div className="text-lg sm:text-xl font-black text-slate-900 dark:text-white font-mono truncate">
+          <div className="text-base sm:text-xl font-black text-slate-900 dark:text-white font-mono truncate">
             {formatCurrency(totalSales, currentOrg?.currency || 'SAR', language)}
           </div>
-          <span className="text-[10px] text-amber-500 font-medium">نقد + شبكة</span>
+          <span className="text-[9px] sm:text-[10px] text-amber-500 font-medium">نقد + شبكة</span>
         </div>
 
         {/* 2. Total Cash */}
-        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
+        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-3 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
           <div className="absolute top-0 inset-x-0 h-1 bg-amber-400" />
-          <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1">
+          <span className="text-[10px] sm:text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1 truncate">
             إجمالي النقد (كاش)
           </span>
-          <div className="text-lg sm:text-xl font-black text-amber-500 font-mono truncate">
+          <div className="text-base sm:text-xl font-black text-amber-500 font-mono truncate">
             {formatCurrency(totalCash, currentOrg?.currency || 'SAR', language)}
           </div>
-          <span className="text-[10px] text-slate-400 font-medium">السيولة النقدية المستلمة</span>
+          <span className="text-[9px] sm:text-[10px] text-slate-400 font-medium">السيولة المستلمة</span>
         </div>
 
         {/* 3. Total Card */}
-        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
+        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-3 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
           <div className="absolute top-0 inset-x-0 h-1 bg-sky-400" />
-          <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1">
+          <span className="text-[10px] sm:text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1 truncate">
             إجمالي الشبكة (مدى)
           </span>
-          <div className="text-lg sm:text-xl font-black text-sky-400 font-mono truncate">
+          <div className="text-base sm:text-xl font-black text-sky-400 font-mono truncate">
             {formatCurrency(totalCard, currentOrg?.currency || 'SAR', language)}
           </div>
-          <span className="text-[10px] text-slate-400 font-medium">مدفوعات نقاط البيع</span>
+          <span className="text-[9px] sm:text-[10px] text-slate-400 font-medium">مدفوعات نقاط البيع</span>
         </div>
 
         {/* 4. Total Expenses */}
-        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
+        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-3 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
           <div className="absolute top-0 inset-x-0 h-1 bg-rose-400" />
-          <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1">
+          <span className="text-[10px] sm:text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1 truncate">
             إجمالي المشتريات
           </span>
-          <div className="text-lg sm:text-xl font-black text-rose-400 font-mono truncate">
+          <div className="text-base sm:text-xl font-black text-rose-400 font-mono truncate">
             {formatCurrency(totalExpenses, currentOrg?.currency || 'SAR', language)}
           </div>
-          <span className="text-[10px] text-slate-400 font-medium">مصروفات الصناديق</span>
+          <span className="text-[9px] sm:text-[10px] text-slate-400 font-medium">مصروفات الصناديق</span>
         </div>
 
         {/* 5. Remaining in Box */}
-        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
+        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-3 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
           <div className="absolute top-0 inset-x-0 h-1 bg-sky-500" />
-          <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1">
+          <span className="text-[10px] sm:text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1 truncate">
             الكاش المتبقي بالصندوق
           </span>
-          <div className="text-lg sm:text-xl font-black text-sky-500 font-mono truncate">
+          <div className="text-base sm:text-xl font-black text-sky-500 font-mono truncate">
             {formatCurrency(totalRemainingInBox, currentOrg?.currency || 'SAR', language)}
           </div>
-          <span className="text-[10px] text-sky-600 dark:text-sky-400 font-medium">
+          <span className="text-[9px] sm:text-[10px] text-sky-600 dark:text-sky-400 font-medium">
             النقد - المشتريات
           </span>
         </div>
 
         {/* 6. Net Revenue */}
-        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
+        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-3 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
           <div className="absolute top-0 inset-x-0 h-1 bg-amber-400" />
-          <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1">
+          <span className="text-[10px] sm:text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1 truncate">
             صافي المبيعات
           </span>
-          <div className="text-lg sm:text-xl font-black text-amber-400 font-mono truncate">
+          <div className="text-base sm:text-xl font-black text-amber-400 font-mono truncate">
             {formatCurrency(totalNetPeriod, currentOrg?.currency || 'SAR', language)}
           </div>
-          <span className="text-[10px] text-amber-500 font-medium">المبيعات - المشتريات</span>
+          <span className="text-[9px] sm:text-[10px] text-amber-500 font-medium">المبيعات - المشتريات</span>
         </div>
 
         {/* 7. Total Closings */}
-        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
+        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-3 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
           <div className="absolute top-0 inset-x-0 h-1 bg-slate-400" />
-          <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1">
+          <span className="text-[10px] sm:text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1 truncate">
             عدد الإقفالات
           </span>
-          <div className="text-lg sm:text-xl font-black text-slate-900 dark:text-white font-mono">
+          <div className="text-base sm:text-xl font-black text-slate-900 dark:text-white font-mono">
             {activeClosings.length}
           </div>
-          <span className="text-[10px] text-slate-400 font-medium">جميع الورديات</span>
+          <span className="text-[9px] sm:text-[10px] text-slate-400 font-medium">جميع الورديات</span>
         </div>
 
         {/* 8. Pending Closings */}
         <div
           onClick={() => onNavigateTab('closings')}
-          className="bg-white dark:bg-[#0c1829] rounded-2xl p-4 sm:p-5 border border-amber-500/30 shadow-sm relative overflow-hidden group cursor-pointer hover:border-amber-400 transition-colors"
+          className="bg-white dark:bg-[#0c1829] rounded-2xl p-3 sm:p-5 border border-amber-500/30 shadow-sm relative overflow-hidden group cursor-pointer hover:border-amber-400 transition-colors"
         >
           <div className="absolute top-0 inset-x-0 h-1 bg-amber-500 animate-pulse" />
-          <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400 block mb-1 flex items-center justify-between">
+          <span className="text-[10px] sm:text-[11px] font-medium text-amber-600 dark:text-amber-400 block mb-1 flex items-center justify-between">
             <span>معلق للمراجعة</span>
             <Clock className="w-3.5 h-3.5 text-amber-500" />
           </span>
-          <div className="text-lg sm:text-xl font-black text-amber-500 font-mono">
+          <div className="text-base sm:text-xl font-black text-amber-500 font-mono">
             {pendingCount}
           </div>
-          <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold underline">
+          <span className="text-[9px] sm:text-[10px] text-amber-600 dark:text-amber-400 font-semibold underline">
             فحص واعتماد الآن ←
           </span>
         </div>
 
         {/* 9. Approved Closings */}
-        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
+        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-3 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
           <div className="absolute top-0 inset-x-0 h-1 bg-amber-400" />
-          <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1 flex items-center justify-between">
+          <span className="text-[10px] sm:text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1 flex items-center justify-between">
             <span>إقفالات معتمدة</span>
             <CheckCircle2 className="w-3.5 h-3.5 text-amber-400" />
           </span>
-          <div className="text-lg sm:text-xl font-black text-amber-400 font-mono">
+          <div className="text-base sm:text-xl font-black text-amber-400 font-mono">
             {approvedCount}
           </div>
-          <span className="text-[10px] text-slate-400 font-medium">مقفلة رسمياً</span>
+          <span className="text-[9px] sm:text-[10px] text-slate-400 font-medium">مقفلة رسمياً</span>
         </div>
 
         {/* 10. Rejected Closings */}
-        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
+        <div className="bg-white dark:bg-[#0c1829] rounded-2xl p-3 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
           <div className="absolute top-0 inset-x-0 h-1 bg-rose-500" />
-          <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1 flex items-center justify-between">
+          <span className="text-[10px] sm:text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-1 flex items-center justify-between">
             <span>معاد للتعديل</span>
             <RotateCcw className="w-3.5 h-3.5 text-rose-500" />
           </span>
-          <div className="text-lg sm:text-xl font-black text-rose-400 font-mono">
+          <div className="text-base sm:text-xl font-black text-rose-400 font-mono">
             {rejectedCount}
           </div>
-          <span className="text-[10px] text-rose-500 font-medium">بانتظار تصحيح الموظف</span>
+          <span className="text-[9px] sm:text-[10px] text-rose-500 font-medium">بانتظار تصحيح الموظف</span>
         </div>
       </div>
 

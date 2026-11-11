@@ -112,31 +112,31 @@ export const EmployeeDashboard: React.FC = () => {
   return (
     <div className="space-y-8">
       {/* Employee Top Welcome & Locked Branch Card */}
-      <div className="bg-white dark:bg-[#0c1829] rounded-3xl p-6 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center justify-between gap-6">
+      <div className="bg-white dark:bg-[#0c1829] rounded-2xl sm:rounded-3xl p-4 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center justify-between gap-4 sm:gap-6">
         <div className="space-y-2">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-semibold">
             <Clock className="w-3.5 h-3.5" />
             <span>لوحة موظف الصندوق والورديات</span>
           </div>
-          <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
+          <h2 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white break-words">
             مرحباً، {userProfile?.displayName || currentUser?.email}
           </h2>
-          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-slate-500 dark:text-slate-400">
             <span className="flex items-center gap-1.5 font-bold text-amber-500">
-              <Building2 className="w-4 h-4" />
+              <Building2 className="w-4 h-4 shrink-0" />
               المؤسسة: {currentOrg?.name}
             </span>
-            <span>•</span>
+            <span className="hidden sm:inline">•</span>
             <span className="flex items-center gap-1.5 font-bold text-sky-400">
-              <Lock className="w-3.5 h-3.5" />
-              الفرع المخصص لك: {currentBranch?.name || 'الفرع الرئيسي'} (مقيد بحسابك)
+              <Lock className="w-3.5 h-3.5 shrink-0" />
+              الفرع: {currentBranch?.name || 'الفرع الرئيسي'}
             </span>
           </div>
         </div>
 
         {/* Notifications Alert */}
         {rejectedCount > 0 && (
-          <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-center gap-3">
+          <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-center gap-3 w-full sm:w-auto">
             <AlertCircle className="w-5 h-5 shrink-0" />
             <div>
               <span className="font-bold block">تنبيه من الإدارة:</span>
@@ -147,19 +147,19 @@ export const EmployeeDashboard: React.FC = () => {
       </div>
 
       {/* Grid: Create Shift Closing Form (Left 7 Cols) + Quick Stats (Right 5 Cols) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 items-start">
         {/* Shift Closing Form: 7 Cols */}
-        <div className="lg:col-span-7 bg-white dark:bg-[#0c1829] rounded-3xl p-6 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-xl space-y-6">
-          <div className="pb-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-500 flex items-center justify-center font-bold">
+        <div className="lg:col-span-7 bg-white dark:bg-[#0c1829] rounded-2xl sm:rounded-3xl p-4 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-xl space-y-5 sm:space-y-6">
+          <div className="pb-4 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2.5 sm:gap-3">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-amber-500/20 text-amber-500 flex items-center justify-center font-bold shrink-0">
                 <Coins className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
+                <h3 className="text-sm sm:text-lg font-bold text-slate-900 dark:text-white">
                   تسجيل إقفال وردية جديدة
                 </h3>
-                <span className="text-xs text-slate-400">
+                <span className="text-[11px] sm:text-xs text-slate-400">
                   الحساب الفوري التلقائي بدقة الهللات
                 </span>
               </div>
@@ -171,10 +171,10 @@ export const EmployeeDashboard: React.FC = () => {
                 setCardSales('2000');
                 setExpenses('400');
               }}
-              className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1"
+              className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 py-1"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>تحميل المثال القياسي (1500/2000/400)</span>
+              <span>تحميل المثال القياسي</span>
             </button>
           </div>
 
@@ -604,8 +604,8 @@ export const EmployeeDashboard: React.FC = () => {
 
       {/* Modal for viewing Rejection Reason */}
       {viewingClosing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm">
-          <div className="bg-white dark:bg-[#0c1829] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-md p-6 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/75 backdrop-blur-sm">
+          <div className="bg-white dark:bg-[#0c1829] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-md p-5 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
               <h4 className="text-base font-bold text-rose-600 dark:text-rose-400 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4" />

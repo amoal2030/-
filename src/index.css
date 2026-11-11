@@ -5,8 +5,19 @@
     --font-arabic: 'IBM Plex Sans Arabic', 'Cairo', system-ui, -apple-system, sans-serif;
   }
 
-  body {
+  html, body {
     font-family: var(--font-arabic);
+    overflow-x: hidden;
+    width: 100%;
+    max-width: 100vw;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  #root {
+    width: 100%;
+    min-height: 100vh;
+    overflow-x: hidden;
   }
 }
 
