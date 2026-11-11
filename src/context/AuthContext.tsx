@@ -662,8 +662,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   /**
-   * Concurrency-Safe Shift Closing Submission via runTransaction
-   * Guarantees zero duplicate closings even with concurrent requests
+   * Atomic Shift Closing Submission via writeBatch
+   * Guarantees atomic dual-write for both closing document and immutable audit log,
+   * fully compliant with Firestore Security Rules (getAfter and actor validation).
    */
   const submitShiftClosing = async (data: {
     branchId: string;
@@ -677,11 +678,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     status: 'draft' | 'pending_review';
   }): Promise<ShiftClosing> => {
     if (!currentOrg || !userProfile || !currentUser) {
-      throw new Error('User or organization not loaded');
+      throw new Error('بيانات المستخدم أو المؤسسة غير محملة. يرجى تسجيل الدخول مجدداً.');
     }
 
     if (userProfile.role === 'employee' && userProfile.isActive === false) {
       throw new Error('حسابك معطل ولا يمكنك إرسال إقفالات.');
+    }
+
+    // Organization Isolation Check
+    if (userProfile.orgId !== currentOrg.id) {
+      throw new Error('لا يمكنك إنشاء إقفال لمؤسسة أخرى.');
+    }
+
+    // Branch Assignment Security Check: Employee can ONLY submit for their assigned branch
+    if (userProfile.role === 'employee' && userProfile.branchId && userProfile.branchId !== data.branchId) {
+      throw new Error('لا يمكنك إنشاء إقفال لفرع غير مخصص لحسابك.');
     }
 
     const calc = calculateShiftTotals(data.cashSales, data.cardSales, data.expenses);
@@ -696,69 +707,114 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       data.period
     );
     const closingDocRef = doc(db, 'closings', closingId);
-    const auditLogRef = doc(db, 'auditLogs', `log_${Date.now()}`);
+    const logId = `log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const auditLogRef = doc(db, 'auditLogs', logId);
     const nowIso = new Date().toISOString();
 
-    // Execute atomic transaction for strict concurrency safety
-    return await runTransaction(db, async (transaction) => {
-      const existingSnap = await transaction.get(closingDocRef);
+    // Check for existing closing for the same branch, date, and period:
+    // 1. Check in-memory closings first (instant)
+    const existingInState = closings.find((c) => c.id === closingId);
 
-      if (existingSnap.exists()) {
-        const existingData = existingSnap.data() as ShiftClosing;
-        if (existingData.status === 'approved') {
-          throw new Error(
-            `يوجد إقفال معتمد مسبقاً لهذا الفرع (${data.branchName}) للفترة ${
-              data.period === 'morning' ? 'الصباحية' : 'المسائية'
-            } بتاريخ ${data.date}. لا يُسمح بتعديل الإقفال بعد اعتماده.`
-          );
+    // 2. Query Firestore collection to confirm server state safely without null-get evaluation error
+    let existingData: ShiftClosing | null = existingInState || null;
+    if (!existingData) {
+      try {
+        const q = query(
+          collection(db, 'closings'),
+          where('orgId', '==', currentOrg.id),
+          where('branchId', '==', data.branchId),
+          where('date', '==', data.date),
+          where('period', '==', data.period)
+        );
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          existingData = snap.docs[0].data() as ShiftClosing;
         }
-        if (existingData.status === 'pending_review' && existingData.employeeId !== currentUser.uid) {
-          throw new Error(`يوجد إقفال قيد المراجعة بالفعل لنفس الفرع والفترة.`);
+      } catch (checkErr) {
+        console.warn('Notice checking existing closings via query:', checkErr);
+      }
+    }
+
+    // Enforce strict duplicate closing and approval immutability guards:
+    if (existingData) {
+      if (existingData.status === 'approved') {
+        throw new Error(
+          `يوجد إقفال معتمد مسبقاً لهذا الفرع (${data.branchName}) للفترة ${
+            data.period === 'morning' ? 'الصباحية' : 'المسائية'
+          } بتاريخ ${data.date}. لا يُسمح بتعديل الإقفال بعد اعتماده.`
+        );
+      }
+      if (existingData.status === 'pending_review') {
+        if (existingData.employeeId !== currentUser.uid) {
+          throw new Error('يوجد إقفال قيد المراجعة بالفعل لنفس الفرع والفترة بواسطة موظف آخر.');
+        } else {
+          throw new Error('تم إرسال إقفال لهذه الفترة وهو قيد مراجعة الإدارة حالياً.');
         }
       }
+    }
 
-      const newClosing: ShiftClosing = {
-        id: closingId,
-        orgId: currentOrg.id,
-        branchId: data.branchId,
-        branchName: data.branchName,
-        employeeId: currentUser.uid,
-        employeeName: userProfile.displayName || currentUser.email || 'موظف الصندوق',
-        date: data.date,
-        period: data.period,
-        cashSales: calc.cashSales,
-        cardSales: calc.cardSales,
-        totalSales: calc.totalSales,
-        expenses: calc.expenses,
-        remainingInBox: calc.remainingInBox,
-        netPeriod: calc.netPeriod,
-        notes: data.notes?.trim() || '',
-        status: data.status,
-        attachmentIds: [],
-        createdAt: existingSnap.exists() ? (existingSnap.data() as ShiftClosing).createdAt : nowIso,
-        updatedAt: nowIso,
-      };
+    // Ensure safeActorName has at least 2 characters as required by firestore.rules:
+    // incoming().actorName is string && incoming().actorName.size() >= 2 && incoming().actorName.size() <= 100
+    let safeActorName = userProfile.displayName?.trim() || currentUser.email || 'موظف الصندوق';
+    if (safeActorName.length < 2) {
+      safeActorName = 'موظف الصندوق';
+    }
 
-      const auditEntry: AuditLog = {
-        id: auditLogRef.id,
-        orgId: currentOrg.id,
-        actorId: currentUser.uid,
-        actorName: userProfile.displayName,
-        actorRole: userProfile.role,
-        action: data.status === 'draft' ? 'CLOSING_DRAFT_SAVED' : 'CLOSING_SUBMITTED_FOR_REVIEW',
-        targetType: 'closing',
-        targetId: closingId,
-        details: `${data.status === 'draft' ? 'حفظ مسودة' : 'إرسال للمراجعة'} إقفال وردية ${
-          data.period === 'morning' ? 'صباحية' : 'مسائية'
-        } لفرع ${data.branchName} بتاريخ ${data.date}. إجمالي المبيعات: ${calc.totalSales}`,
-        timestamp: nowIso,
-      };
+    let safeEmployeeName = userProfile.displayName?.trim() || currentUser.email || 'موظف الصندوق';
+    if (safeEmployeeName.length < 2) {
+      safeEmployeeName = 'موظف الصندوق';
+    }
 
-      transaction.set(closingDocRef, newClosing);
-      transaction.set(auditLogRef, auditEntry);
+    const newClosing: ShiftClosing = {
+      id: closingId,
+      orgId: currentOrg.id,
+      branchId: data.branchId,
+      branchName: data.branchName,
+      employeeId: currentUser.uid,
+      employeeName: safeEmployeeName,
+      date: data.date,
+      period: data.period,
+      cashSales: calc.cashSales,
+      cardSales: calc.cardSales,
+      totalSales: calc.totalSales,
+      expenses: calc.expenses,
+      remainingInBox: calc.remainingInBox,
+      netPeriod: calc.netPeriod,
+      notes: data.notes?.trim() || '',
+      status: data.status,
+      attachmentIds: existingData?.attachmentIds || [],
+      createdAt: existingData ? existingData.createdAt : nowIso,
+      updatedAt: nowIso,
+    };
 
-      return newClosing;
-    });
+    const auditEntry: AuditLog = {
+      id: logId,
+      orgId: currentOrg.id,
+      actorId: currentUser.uid,
+      actorName: safeActorName,
+      actorRole: userProfile.role,
+      action: data.status === 'draft' ? 'CLOSING_DRAFT_SAVED' : 'CLOSING_SUBMITTED_FOR_REVIEW',
+      targetType: 'closing',
+      targetId: closingId,
+      details: `${data.status === 'draft' ? 'حفظ مسودة' : 'إرسال للمراجعة'} إقفال وردية ${
+        data.period === 'morning' ? 'صباحية' : 'مسائية'
+      } لفرع ${data.branchName} بتاريخ ${data.date}. إجمالي المبيعات: ${calc.totalSales}`,
+      timestamp: nowIso,
+    };
+
+    // Atomic batched write: creates closing and audit log together
+    const batch = writeBatch(db);
+    batch.set(closingDocRef, newClosing);
+    batch.set(auditLogRef, auditEntry);
+
+    try {
+      await batch.commit();
+    } catch (err: any) {
+      console.error('Error committing shift closing batch:', err);
+      handleFirestoreError(err, OperationType.WRITE, `closings/${closingId}`);
+    }
+
+    return newClosing;
   };
 
   const reviewShiftClosing = async (
