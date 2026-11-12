@@ -97,10 +97,22 @@ export const Footer: React.FC = () => {
         </div>
 
         {/* Bottom Bar */}
-        <div className="pt-8 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
+        <div className="pt-8 border-t border-slate-800/80 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-slate-400">
           <div>{t('allRightsReserved')}</div>
-          <div className="flex items-center gap-1.5 text-slate-400">
-            <span>{t('noGreenNotice')}</span>
+          <div className="flex flex-wrap items-center justify-center gap-1.5 text-center">
+            <span>صمم من موقع خدماتي البرمجية</span>
+            <a
+              href="https://amoal2030.github.io/a1/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-amber-400 hover:text-amber-300 underline font-semibold transition-colors"
+              dir="ltr"
+            >
+              https://amoal2030.github.io/a1/
+            </a>
+          </div>
+          <div className="text-slate-500 text-[11px]">
+            {t('noGreenNotice')}
           </div>
         </div>
       </div>

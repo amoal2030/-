@@ -56,7 +56,7 @@ export const Dashboard: React.FC = () => {
   const pendingCount = closings.filter((c) => c.status === 'pending_review').length;
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-[#070e17] text-slate-900 dark:text-slate-100" dir={direction}>
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-[#070e17] text-slate-900 dark:text-slate-100" dir={direction}>
       {/* Top Organization Header */}
       <header className="bg-white dark:bg-[#0c1829] border-b border-slate-200 dark:border-slate-800 shadow-sm sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
@@ -305,7 +305,7 @@ export const Dashboard: React.FC = () => {
       </header>
 
       {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex-1 w-full">
         {isManager ? (
           /* Manager View Router */
           <>
@@ -324,6 +324,25 @@ export const Dashboard: React.FC = () => {
           <EmployeeDashboard />
         )}
       </main>
+
+      {/* Dashboard Bottom Attribution */}
+      <footer className="mt-auto border-t border-slate-200 dark:border-slate-800/80 py-4 text-xs text-slate-500 dark:text-slate-400 bg-white/40 dark:bg-[#0c1829]/40">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-2 text-center sm:text-start">
+          <p>© {new Date().getFullYear()} {currentOrg?.name || 'الإقفال | AL EQFAL'}</p>
+          <div className="flex flex-wrap items-center justify-center gap-1.5">
+            <span>صمم من موقع خدماتي البرمجية</span>
+            <a
+              href="https://amoal2030.github.io/a1/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-amber-500 dark:text-amber-400 hover:text-amber-600 dark:hover:text-amber-300 underline font-medium transition-colors"
+              dir="ltr"
+            >
+              https://amoal2030.github.io/a1/
+            </a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 };
