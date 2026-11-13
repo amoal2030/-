@@ -11,7 +11,6 @@ import {
   Moon,
   ShieldCheck,
   HardDrive,
-  GitBranch,
   CheckCircle2,
   Info,
   ExternalLink,
@@ -31,7 +30,10 @@ import {
   clearDriveSession,
   getDriveOAuthClientConfig,
   provisionOrganizationDriveHierarchy,
+  assertDriveSessionMatchesAccount,
+  buildGoogleDriveFolderUrl,
   DriveTokenSession,
+  OrgDriveProvisionResult,
 } from '../../services/driveService';
 
 export const SettingsView: React.FC = () => {
@@ -76,6 +78,38 @@ export const SettingsView: React.FC = () => {
   const googleProvider = currentUser?.providerData?.find((p) => p.providerId === 'google.com') || null;
   const isGoogleProviderPresent = Boolean(googleProvider?.uid);
   const currentYearMonth = new Date().toISOString().slice(0, 7);
+  const linkedDriveEmail =
+    currentOrg?.driveAccountEmail || googleProvider?.email || currentOrg?.ownerEmail || '';
+
+  const assertCompleteProvisionResult = (
+    result: OrgDriveProvisionResult,
+    expectedBranchCount: number
+  ) => {
+    if (!result.orgFolder?.folderId || !result.orgFolder?.verifiedViaGet) {
+      throw new Error('لم يكتمل التحقق الفعلي من مجلد المؤسسة في Google Drive عبر files.get.');
+    }
+    if (result.branchResults.length !== expectedBranchCount) {
+      throw new Error(
+        `لم تكتمل مزامنة جميع الفروع: تم التحقق من (${result.branchResults.length}) من أصل (${expectedBranchCount}) فرع.`
+      );
+    }
+    for (const br of result.branchResults) {
+      if (!br.branchFolder?.folderId || !br.branchFolder?.verifiedViaGet) {
+        throw new Error(`تعذر التحقق الفعلي من مجلد الفرع "${br.branchName}" في Google Drive.`);
+      }
+      if (!br.monthFolder?.folderId) {
+        throw new Error(
+          `تعذر التحقق الفعلي من مجلد الشهر "${currentYearMonth}" للفرع "${br.branchName}" في Google Drive.`
+        );
+      }
+    }
+    const expectedTotal = 1 + expectedBranchCount * 2;
+    if (result.verifiedCount !== expectedTotal) {
+      throw new Error(
+        `عدد المجلدات المتحقق منها (${result.verifiedCount}) لا يطابق العدد المطلوب (${expectedTotal}).`
+      );
+    }
+  };
 
   // Dynamic in-memory token lifetime countdown
   useEffect(() => {
@@ -119,12 +153,29 @@ export const SettingsView: React.FC = () => {
       return;
     }
 
+    const ownerEmail = googleProvider.email || currentOrg.ownerEmail || '';
+    const linkedConstraint = currentOrg.driveConnected
+      ? {
+          linkedSub: currentOrg.driveGoogleSub,
+          linkedEmail: currentOrg.driveAccountEmail,
+        }
+      : undefined;
+
     setDriveLoading(true);
     try {
       const session = await requestDriveAuthorization(
         googleProvider.uid,
-        googleProvider.email || currentOrg.ownerEmail || ''
+        ownerEmail,
+        linkedConstraint
       );
+
+      assertDriveSessionMatchesAccount(session, {
+        googleUid: googleProvider.uid,
+        email: ownerEmail,
+        linkedSub: linkedConstraint?.linkedSub,
+        linkedEmail: linkedConstraint?.linkedEmail,
+      });
+
       setDriveSession(session);
       setRemainingMinutes(Math.max(0, Math.floor((session.expiresAt - Date.now()) / 60000)));
 
@@ -134,6 +185,8 @@ export const SettingsView: React.FC = () => {
         branches,
         yearMonth: currentYearMonth,
       });
+
+      assertCompleteProvisionResult(provisionResult, branches.length);
 
       await saveDriveConnection({
         driveAccountEmail: session.email,
@@ -152,7 +205,7 @@ export const SettingsView: React.FC = () => {
       });
 
       setDriveSuccess(
-        `تم ربط حساب Google Drive (${session.email}) والتحقق من مجلد المؤسسة "${provisionResult.orgFolder.folderName}" وتهيئة مجلدات الفروع للشهر ${currentYearMonth} بنجاح.`
+        `تم التحقق الفعلي من حساب (${session.email}) ومجلد المؤسسة "${provisionResult.orgFolder.folderName}" وتهيئة (${provisionResult.branchResults.length}) فرع لشهر ${currentYearMonth} بنجاح.`
       );
     } catch (err: any) {
       setDriveError(err?.message || 'تعذر إتمام ربط Google Drive.');
@@ -176,17 +229,52 @@ export const SettingsView: React.FC = () => {
       return;
     }
 
+    const ownerEmail = googleProvider.email || currentOrg.ownerEmail || '';
+
+    // Strict check: signed-in owner Google account must match the organization's linked Drive account
+    if (currentOrg.driveGoogleSub && currentOrg.driveGoogleSub !== googleProvider.uid) {
+      setDriveError(
+        `حساب Google المسجل دخولاً به (${ownerEmail}) لا يطابق حساب Google المرتبط بالمؤسسة (${
+          currentOrg.driveAccountEmail || currentOrg.driveGoogleSub
+        }). يرجى تسجيل الدخول بالحساب المرتبط أو فصل الربط أولاً.`
+      );
+      return;
+    }
+    if (
+      currentOrg.driveAccountEmail &&
+      ownerEmail &&
+      currentOrg.driveAccountEmail.toLowerCase().trim() !== ownerEmail.toLowerCase().trim()
+    ) {
+      setDriveError(
+        `البريد الإلكتروني الحالي (${ownerEmail}) لا يطابق بريد Google المرتبط بالمؤسسة (${currentOrg.driveAccountEmail}). تم إيقاف المزامنة.`
+      );
+      return;
+    }
+
     setSyncLoading(true);
     try {
       let session = getActiveDriveSession();
-      if (!session) {
+      if (session) {
+        assertDriveSessionMatchesAccount(session, {
+          googleUid: googleProvider.uid,
+          email: ownerEmail,
+          linkedSub: currentOrg.driveGoogleSub,
+          linkedEmail: currentOrg.driveAccountEmail,
+        });
+      } else {
         if (!isOAuthConfigured) {
           throw new Error('متغير البيئة VITE_GOOGLE_DRIVE_CLIENT_ID غير مضبوط في نسخة البناء الحالية.');
         }
-        session = await requestDriveAuthorization(
-          googleProvider.uid,
-          googleProvider.email || currentOrg.ownerEmail || ''
-        );
+        session = await requestDriveAuthorization(googleProvider.uid, ownerEmail, {
+          linkedSub: currentOrg.driveGoogleSub,
+          linkedEmail: currentOrg.driveAccountEmail,
+        });
+        assertDriveSessionMatchesAccount(session, {
+          googleUid: googleProvider.uid,
+          email: ownerEmail,
+          linkedSub: currentOrg.driveGoogleSub,
+          linkedEmail: currentOrg.driveAccountEmail,
+        });
         setDriveSession(session);
         setRemainingMinutes(Math.max(0, Math.floor((session.expiresAt - Date.now()) / 60000)));
       }
@@ -197,6 +285,9 @@ export const SettingsView: React.FC = () => {
         branches,
         yearMonth: currentYearMonth,
       });
+
+      // Never treat Firestore write alone as proof; ensure every folder passed Drive verification first
+      assertCompleteProvisionResult(provisionResult, branches.length);
 
       await saveDriveConnection({
         driveAccountEmail: session.email,
@@ -215,7 +306,7 @@ export const SettingsView: React.FC = () => {
       });
 
       setDriveSuccess(
-        `تم التحقق من مجلد المؤسسة وتحديث مجلدات (${provisionResult.branchResults.length}) فرع لشهر ${currentYearMonth} بنجاح.`
+        `تم التحقق الفعلي من مجلد المؤسسة وتحديث مجلدات (${provisionResult.branchResults.length}) فرع لشهر ${currentYearMonth} في حساب (${session.email}) بنجاح.`
       );
     } catch (err: any) {
       setDriveError(err?.message || 'حدث خطأ أثناء مزامنة مجلدات Google Drive.');
@@ -523,9 +614,13 @@ export const SettingsView: React.FC = () => {
                         </span>
                       </div>
 
-                      {currentOrg.driveFolderLink && (
+                      {(currentOrg.driveFolderLink || currentOrg.driveFolderId) && (
                         <a
-                          href={currentOrg.driveFolderLink}
+                          href={buildGoogleDriveFolderUrl(
+                            currentOrg.driveFolderLink,
+                            currentOrg.driveFolderId,
+                            linkedDriveEmail
+                          )}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 font-bold text-xs inline-flex items-center gap-1.5 transition-colors"
@@ -551,6 +646,8 @@ export const SettingsView: React.FC = () => {
                           {branches.map((branch) => {
                             const monthKey = `${branch.id}_${currentYearMonth}`;
                             const monthRef = currentOrg.driveMonthFolderIds?.[monthKey];
+                            const targetFolderId = monthRef?.folderId || branch.driveFolderId;
+                            const targetLink = monthRef?.webViewLink || branch.driveFolderLink;
                             return (
                               <div
                                 key={branch.id}
@@ -568,9 +665,13 @@ export const SettingsView: React.FC = () => {
                                       : 'بانتظار مزامنة مجلد الفرع'}
                                   </div>
                                 </div>
-                                {branch.driveFolderLink && (
+                                {targetFolderId && (
                                   <a
-                                    href={monthRef?.webViewLink || branch.driveFolderLink}
+                                    href={buildGoogleDriveFolderUrl(
+                                      targetLink,
+                                      targetFolderId,
+                                      linkedDriveEmail
+                                    )}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="px-2 py-1 rounded bg-slate-100 dark:bg-[#070e17] hover:text-amber-500 text-slate-600 dark:text-slate-300 text-[10px] font-bold shrink-0 inline-flex items-center gap-1"
