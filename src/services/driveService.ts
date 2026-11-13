@@ -1,45 +1,77 @@
 /**
- * Google Drive Integration Service — AL EQFAL (Phase 1 Isolated Sandbox)
- * Strict Constraints Applied:
+ * Google Drive Integration Service — الإقفال | AL EQFAL
+ * Decentralized Per-Organization Owner Drive Architecture
+ *
+ * Security & Compliance Guarantees:
  * - Google Identity Services (GIS) Token Model
- * - Scopes: openid, email, https://www.googleapis.com/auth/drive.file
- * - Dynamic expires_in tracking with safety margin
- * - In-Memory ONLY session storage (Zero localStorage, Zero sessionStorage, Zero Firestore writes)
- * - Strict Owner Verification: Matching sub and email against Firebase Google Provider
- * - Clean discard on mismatch without automatic revoke
- * - Pagination-aware search (nextPageToken) for 'AL EQFAL - TEST'
- * - Multi-folder conflict halt
+ * - Minimum Scopes: openid, email, https://www.googleapis.com/auth/drive.file
+ * - Access Token lives strictly in browser RAM (never Firestore, localStorage, or sessionStorage)
+ * - Dynamic expires_in calculation with 120s safety margin
+ * - Strict Identity Verification: Matches Google UserInfo sub, email, and email_verified === true
+ *   against the Firebase Google Provider of the verified organization owner
+ * - No Client Secret in browser code
+ * - Idempotent folder provisioning with pagination (nextPageToken) and multi-match halt
  */
 
 import firebaseConfig from '../../firebase-applet-config.json';
+import { Branch, DriveMonthFolderRef, Organization } from '../types';
 
 export interface DriveTokenSession {
   accessToken: string;
   expiresIn: number;
   obtainedAt: number;
   expiresAt: number;
-  email?: string;
-  name?: string;
-  sub?: string;
+  email: string;
+  name: string;
+  sub: string;
   verified: boolean;
 }
 
-export interface TestFolderInspectionResult {
-  status: 'found_single' | 'found_multiple' | 'created_new' | 'error';
-  folderId?: string;
-  folderName?: string;
-  matchingCount: number;
-  matchingFolderIds?: string[];
-  webViewLink?: string;
-  message: string;
-  hasAppProperties?: boolean;
+export interface DriveFolderRef {
+  folderId: string;
+  folderName: string;
+  webViewLink: string;
+  reused: boolean;
 }
 
-// In-Memory state for the active browser session ONLY
+export interface BranchDriveProvisionResult {
+  branchId: string;
+  branchFolder: DriveFolderRef;
+  monthFolder?: DriveMonthFolderRef;
+}
+
+export interface OrgDriveProvisionResult {
+  orgFolder: DriveFolderRef;
+  branchResults: BranchDriveProvisionResult[];
+  monthFolderMap: Record<string, DriveMonthFolderRef>;
+}
+
+// In-Memory token session ONLY for the active browser tab
 let activeSession: DriveTokenSession | null = null;
 
 /**
- * Dynamically loads the Google Identity Services client script
+ * Resolves the configured Google OAuth Web Client ID.
+ * Priority:
+ * 1. Explicit production build environment variable VITE_GOOGLE_DRIVE_CLIENT_ID (recommended for https://amoal2030.github.io)
+ * 2. Fallback to oAuthClientId in firebase-applet-config.json if configured with the published origin
+ */
+export const getDriveOAuthClientConfig = (): {
+  clientId: string;
+  source: 'vite_env' | 'firebase_config' | 'missing';
+} => {
+  const envClientId = (import.meta as any).env?.VITE_GOOGLE_DRIVE_CLIENT_ID?.trim();
+  if (envClientId) {
+    return { clientId: envClientId, source: 'vite_env' };
+  }
+  const fbClientId = firebaseConfig.oAuthClientId?.trim();
+  if (fbClientId) {
+    return { clientId: fbClientId, source: 'firebase_config' };
+  }
+  return { clientId: '', source: 'missing' };
+};
+
+/**
+ * Dynamically loads the Google Identity Services script
  */
 export const loadGoogleIdentityScript = (): Promise<void> => {
   return new Promise((resolve, reject) => {
@@ -49,7 +81,9 @@ export const loadGoogleIdentityScript = (): Promise<void> => {
     const existingScript = document.getElementById('google-gis-script');
     if (existingScript) {
       existingScript.addEventListener('load', () => resolve());
-      existingScript.addEventListener('error', (e) => reject(e));
+      existingScript.addEventListener('error', () =>
+        reject(new Error('فشل تحميل مكتبة Google Identity Services. يرجى التحقق من الاتصال.'))
+      );
       return;
     }
     const script = document.createElement('script');
@@ -65,95 +99,114 @@ export const loadGoogleIdentityScript = (): Promise<void> => {
 };
 
 /**
- * Initiates GIS token flow and validates identity against the expected Google Provider UID
+ * Requests OAuth access token via GIS and strictly validates Google identity
+ * against the organization owner's Firebase Google Provider.
  */
 export const requestDriveAuthorization = async (
   expectedGoogleUid: string,
   expectedEmail: string
 ): Promise<DriveTokenSession> => {
+  if (!expectedGoogleUid || !expectedEmail) {
+    throw new Error('بيانات مزود Google لحساب المالك غير مكتملة في الجلسة الحالية.');
+  }
+
   await loadGoogleIdentityScript();
 
-  const clientId = firebaseConfig.oAuthClientId;
+  const { clientId } = getDriveOAuthClientConfig();
   if (!clientId) {
-    throw new Error('لم يتم العثور على Google OAuth Client ID في إعدادات النظام.');
+    throw new Error(
+      'لم يتم العثور على OAuth Client ID مهيأ. يرجى ضبط VITE_GOOGLE_DRIVE_CLIENT_ID في إعدادات البناء أو oAuthClientId في التكوين.'
+    );
   }
 
   return new Promise((resolve, reject) => {
     try {
-      const client = (window as any).google.accounts.oauth2.initTokenClient({
+      const oauth2 = (window as any).google?.accounts?.oauth2;
+      if (!oauth2?.initTokenClient) {
+        return reject(new Error('واجهة Google Identity Services غير جاهزة في المتصفح الحالي.'));
+      }
+
+      const client = oauth2.initTokenClient({
         client_id: clientId,
         scope: 'openid email https://www.googleapis.com/auth/drive.file',
-        login_hint: expectedEmail || undefined,
+        login_hint: expectedEmail,
         callback: async (tokenResponse: any) => {
-          if (tokenResponse.error) {
-            return reject(
-              new Error(`خطأ في تفويض Google: ${tokenResponse.error_description || tokenResponse.error}`)
-            );
+          if (tokenResponse?.error) {
+            activeSession = null;
+            const desc = tokenResponse.error_description || tokenResponse.error;
+            if (tokenResponse.error === 'access_denied') {
+              return reject(new Error('تم إلغاء التفويض أو رفض منح الصلاحية من نافذة Google.'));
+            }
+            return reject(new Error(`خطأ تفويض Google OAuth: ${desc}`));
           }
-          if (!tokenResponse.access_token) {
-            return reject(new Error('لم يُرجع خادم Google رمز وصول صالحاً.'));
+
+          if (!tokenResponse?.access_token) {
+            activeSession = null;
+            return reject(new Error('لم يُرجع خادم Google رمز وصول (Access Token) صالحاً.'));
           }
 
           const rawExpiresIn = Number(tokenResponse.expires_in);
-          const expiresIn = !isNaN(rawExpiresIn) && rawExpiresIn > 0 ? rawExpiresIn : 3599;
-          const obtainedAt = Date.now();
-          // Dynamic expiration with 120-second safety margin
-          const safetyMarginMs = 120 * 1000;
-          const expiresAt = obtainedAt + expiresIn * 1000 - safetyMarginMs;
-          const token = tokenResponse.access_token;
+          if (isNaN(rawExpiresIn) || rawExpiresIn <= 0) {
+            activeSession = null;
+            return reject(new Error('لم ترجع استجابة Google مدة صلاحية صالحة (expires_in).'));
+          }
 
-          // Identity Verification via Google UserInfo
+          const obtainedAt = Date.now();
+          // Deduct 120 seconds safety margin (clamped safely if token lifetime is short)
+          const safetyMarginMs = Math.min(120 * 1000, Math.floor((rawExpiresIn * 1000) / 4));
+          const expiresAt = obtainedAt + rawExpiresIn * 1000 - safetyMarginMs;
+          const token: string = tokenResponse.access_token;
+
           try {
             const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
               headers: { Authorization: `Bearer ${token}` },
             });
 
             if (!userInfoRes.ok) {
-              // Discard token immediately without calling revoke
               activeSession = null;
-              return reject(new Error('تعذر استرداد بيانات الحساب من Google UserInfo للتحقق من الهوية.'));
+              return reject(
+                new Error('تعذر التحقق من هوية حساب Google عبر نقطة UserInfo. تم إسقاط الرمز من الذاكرة.')
+              );
             }
 
             const userInfo = await userInfoRes.json();
 
-            // 1. Check email_verified
-            if (!userInfo.email_verified) {
+            // 1. Require verified Google email
+            if (userInfo.email_verified !== true) {
               activeSession = null;
-              return reject(new Error('حساب Google غير موثق البريد الإلكتروني. يرجى توثيق البريد أولاً.'));
+              return reject(new Error('بريد حساب Google غير موثق (email_verified !== true). تم رفض الربط.'));
             }
 
             // 2. Strict Sub matching with Firebase Google Provider UID
-            if (userInfo.sub !== expectedGoogleUid) {
-              // Discard token from memory immediately WITHOUT calling revoke automatically
+            if (!userInfo.sub || userInfo.sub !== expectedGoogleUid) {
               activeSession = null;
               return reject(
                 new Error(
-                  `الحساب المختار (${userInfo.email || 'غير معروف'}) لا يطابق حساب Google المعتمد لمالك المؤسسة. تم رفض العملية والتخلص من الرمز من الذاكرة دون أي تغيير.`
+                  `الحساب المختار (${userInfo.email || 'غير معروف'}) لا يطابق هوية Google المسجلة لمالك المؤسسة. تم رفض الربط والتخلص من رمز الوصول من الذاكرة دون استدعاء revoke.`
                 )
               );
             }
 
-            // 3. Email matching check
+            // 3. Strict Email matching
             if (
-              userInfo.email &&
-              expectedEmail &&
+              !userInfo.email ||
               userInfo.email.toLowerCase().trim() !== expectedEmail.toLowerCase().trim()
             ) {
               activeSession = null;
               return reject(
                 new Error(
-                  `بريد الحساب المختار (${userInfo.email}) لا يطابق البريد المعتمد للمالك (${expectedEmail}). تم رفض التفويض وتفريغ الذاكرة.`
+                  `البريد الإلكتروني للحساب المختار (${userInfo.email || 'غير معروف'}) لا يطابق بريد مالك المؤسسة المعتمد (${expectedEmail}). تم رفض الربط.`
                 )
               );
             }
 
             const session: DriveTokenSession = {
               accessToken: token,
-              expiresIn,
+              expiresIn: rawExpiresIn,
               obtainedAt,
               expiresAt,
               email: userInfo.email,
-              name: userInfo.name,
+              name: userInfo.name || expectedEmail,
               sub: userInfo.sub,
               verified: true,
             };
@@ -162,20 +215,32 @@ export const requestDriveAuthorization = async (
             resolve(session);
           } catch (verifyErr: any) {
             activeSession = null;
-            reject(new Error(`فشل التحقق من مطابقة الهوية: ${verifyErr?.message || verifyErr}`));
+            reject(new Error(`فشل التحقق من هوية Google: ${verifyErr?.message || verifyErr}`));
+          }
+        },
+        error_callback: (err: any) => {
+          activeSession = null;
+          const errType = err?.type || 'oauth_error';
+          if (errType === 'popup_closed') {
+            reject(new Error('تم إغلاق نافذة تفويض Google قبل إتمام العملية.'));
+          } else if (errType === 'popup_failed_to_open') {
+            reject(new Error('حظر المتصفح فتح نافذة تفويض Google المنبثقة. يرجى السماح بالنوافذ المنبثقة للموقع.'));
+          } else {
+            reject(new Error(`تعذر إتمام تفويض Google (${errType}). تأكد من إضافة النطاق في Authorized JavaScript origins.`));
           }
         },
       });
 
       client.requestAccessToken({ prompt: 'select_account' });
     } catch (err: any) {
-      reject(new Error(`فشل تهيئة عميل التفويض: ${err?.message || err}`));
+      activeSession = null;
+      reject(new Error(`فشل تهيئة عميل Google OAuth: ${err?.message || err}`));
     }
   });
 };
 
 /**
- * Returns the active session if valid and unexpired; otherwise clears memory
+ * Returns active session if valid and unexpired; otherwise clears memory
  */
 export const getActiveDriveSession = (): DriveTokenSession | null => {
   if (!activeSession) return null;
@@ -187,154 +252,349 @@ export const getActiveDriveSession = (): DriveTokenSession | null => {
 };
 
 /**
- * Clears the session from memory
+ * Clears in-memory Drive session completely
  */
 export const clearDriveSession = (): void => {
   activeSession = null;
 };
 
 /**
- * Queries Google Drive for 'AL EQFAL - TEST' handling pagination and multi-folder conflicts
+ * Escapes single quotes and backslashes for Google Drive v3 search query syntax
  */
-export const inspectOrCreateTestFolder = async (
-  token: string
-): Promise<TestFolderInspectionResult> => {
-  const folderName = 'AL EQFAL - TEST';
-  // Base query without appProperties to detect manually created or existing folders
-  const queryFilter = `name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and 'root' in parents and trashed = false`;
+function escapeDriveQueryValue(val: string): string {
+  return val.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
 
-  let allMatchingFolders: any[] = [];
+/**
+ * Verifies if an already-recorded Drive folder ID still exists, is not trashed,
+ * and belongs to the expected parent (when specified).
+ */
+async function verifyExistingFolderById(
+  token: string,
+  folderId: string,
+  expectedParentId?: string
+): Promise<DriveFolderRef | null> {
+  try {
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+        folderId
+      )}?fields=id,name,mimeType,webViewLink,trashed,parents`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (
+      data.trashed === true ||
+      data.mimeType !== 'application/vnd.google-apps.folder'
+    ) {
+      return null;
+    }
+    if (expectedParentId && expectedParentId !== 'root') {
+      if (!Array.isArray(data.parents) || !data.parents.includes(expectedParentId)) {
+        return null;
+      }
+    }
+    return {
+      folderId: data.id,
+      folderName: data.name,
+      webViewLink: data.webViewLink || `https://drive.google.com/drive/folders/${data.id}`,
+      reused: true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Idempotently locates or creates a folder in Google Drive:
+ * 1. If existingFolderId is stored and valid in Drive, reuses it.
+ * 2. Searches all pages (nextPageToken) by name, mimeType, parent, and trashed=false.
+ * 3. Halts on >1 match without deleting or guessing.
+ * 4. Reuses on 1 match (after files.get verification).
+ * 5. Creates on 0 matches and verifies immediately with files.get.
+ */
+export async function ensureDriveFolder(params: {
+  token: string;
+  folderName: string;
+  parentId: string;
+  appProperties: Record<string, string>;
+  existingFolderId?: string;
+}): Promise<DriveFolderRef> {
+  const { token, folderName, parentId, appProperties, existingFolderId } = params;
+
+  // 1. Check recorded folderId first if available
+  if (existingFolderId) {
+    const verifiedExisting = await verifyExistingFolderById(token, existingFolderId, parentId);
+    if (verifiedExisting) {
+      return verifiedExisting;
+    }
+  }
+
+  // 2. Search across all pages using base criteria (name + folder mimeType + parent + trashed=false)
+  const escapedName = escapeDriveQueryValue(folderName);
+  const escapedParent = escapeDriveQueryValue(parentId);
+  const queryFilter = `name = '${escapedName}' and mimeType = 'application/vnd.google-apps.folder' and '${escapedParent}' in parents and trashed = false`;
+
+  let matchingFolders: any[] = [];
   let pageToken: string | undefined = undefined;
 
-  try {
-    // Loop over all result pages via nextPageToken
-    do {
-      const url = new URL('https://www.googleapis.com/drive/v3/files');
-      url.searchParams.set('q', queryFilter);
-      url.searchParams.set(
-        'fields',
-        'nextPageToken, files(id, name, mimeType, appProperties, webViewLink, trashed)'
-      );
-      url.searchParams.set('pageSize', '50');
-      if (pageToken) {
-        url.searchParams.set('pageToken', pageToken);
-      }
-
-      const res = await fetch(url.toString(), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error?.message || `فشل فحص مجلدات Drive (رمز الخطأ: ${res.status})`);
-      }
-
-      const data = await res.json();
-      if (data.files && Array.isArray(data.files)) {
-        allMatchingFolders = allMatchingFolders.concat(data.files);
-      }
-      pageToken = data.nextPageToken;
-    } while (pageToken);
-
-    // Multiple matching folders found
-    if (allMatchingFolders.length > 1) {
-      const ids = allMatchingFolders.map((f) => f.id);
-      return {
-        status: 'found_multiple',
-        matchingCount: allMatchingFolders.length,
-        matchingFolderIds: ids,
-        message: `تم العثور على (${allMatchingFolders.length}) مجلدات متطابقة بالاسم '${folderName}' في Drive. تم إيقاف العملية فوراً لمنع التضارب وعدم الاختيار العشوائي. يرجى مراجعة المجلدات يدوياً.`,
-      };
-    }
-
-    // Exactly one matching folder found
-    if (allMatchingFolders.length === 1) {
-      const existing = allMatchingFolders[0];
-      const hasAppProps = existing.appProperties?.role === 'phase1_test_folder';
-
-      // Read-back verification via files.get
-      const verifyRes = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${existing.id}?fields=id,name,mimeType,webViewLink`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
-
-      if (!verifyRes.ok) {
-        throw new Error(
-          'تم العثور على مجلد مطابق للاسم، ولكن تعذر التحقق من صلاحية قراءته بواسطة التطبيق (نطاق drive.file يتيح الوصول فقط للملفات المنشأة بواسطة التطبيق).'
-        );
-      }
-
-      const verified = await verifyRes.json();
-
-      return {
-        status: 'found_single',
-        folderId: verified.id,
-        folderName: verified.name,
-        matchingCount: 1,
-        webViewLink: verified.webViewLink || `https://drive.google.com/drive/folders/${verified.id}`,
-        hasAppProperties: hasAppProps,
-        message: `تم العثور على المجلد التجريبي الحالي '${verified.name}' والتحقق من صلاحيته وإعادة اعتماده بنجاح دون إنشاء مجلد مكرر.`,
-      };
-    }
-
-    // Zero matching folders found: Create exactly one
-    const createRes = await fetch(
-      'https://www.googleapis.com/drive/v3/files?fields=id,name,mimeType,webViewLink,appProperties',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: folderName,
-          mimeType: 'application/vnd.google-apps.folder',
-          parents: ['root'],
-          appProperties: {
-            role: 'phase1_test_folder',
-            systemId: 'al_eqfal',
-          },
-        }),
-      }
+  do {
+    const url = new URL('https://www.googleapis.com/drive/v3/files');
+    url.searchParams.set('q', queryFilter);
+    url.searchParams.set(
+      'fields',
+      'nextPageToken, files(id, name, mimeType, appProperties, webViewLink, trashed, parents)'
     );
-
-    if (!createRes.ok) {
-      const errJson = await createRes.json().catch(() => ({}));
-      throw new Error(errJson.error?.message || `فشل إنشاء مجلد الاختبار في Drive (رمز: ${createRes.status})`);
+    url.searchParams.set('pageSize', '50');
+    if (pageToken) {
+      url.searchParams.set('pageToken', pageToken);
     }
 
-    const created = await createRes.json();
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
 
-    // Verify immediately after creation
-    const postVerifyRes = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${created.id}?fields=id,name,mimeType,webViewLink`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        clearDriveSession();
+        throw new Error('انتهت صلاحية رمز الوصول إلى Google Drive. يرجى إعادة الربط.');
       }
-    );
-
-    if (!postVerifyRes.ok) {
-      throw new Error('تم إرسال طلب إنشاء المجلد لكن تعذر التحقق المباشر من وجوده في Drive.');
+      throw new Error(errJson.error?.message || `فشل البحث عن المجلد '${folderName}' في Drive (رمز: ${res.status})`);
     }
 
-    const postVerified = await postVerifyRes.json();
+    const data = await res.json();
+    if (Array.isArray(data.files)) {
+      matchingFolders = matchingFolders.concat(data.files);
+    }
+    pageToken = data.nextPageToken;
+  } while (pageToken);
 
-    return {
-      status: 'created_new',
-      folderId: postVerified.id,
-      folderName: postVerified.name,
-      matchingCount: 1,
-      webViewLink: postVerified.webViewLink || `https://drive.google.com/drive/folders/${postVerified.id}`,
-      hasAppProperties: true,
-      message: `تم إنشاء مجلد الاختبار التجريبي '${postVerified.name}' في Google Drive والتحقق من وجوده وصلاحيته بنجاح تام.`,
-    };
-  } catch (error: any) {
-    return {
-      status: 'error',
-      matchingCount: allMatchingFolders.length,
-      message: error?.message || 'حدث خطأ أثناء فحص أو إنشاء مجلد الاختبار في Google Drive.',
-    };
+  // 3. Multiple matches -> halt cleanly without random pick
+  if (matchingFolders.length > 1) {
+    const idsList = matchingFolders.map((f) => f.id).join(' , ');
+    throw new Error(
+      `تم العثور على (${matchingFolders.length}) مجلدات متطابقة بالاسم "${folderName}" في Drive (المعرفات: ${idsList}). تم إيقاف العملية لمنع التضارب؛ يرجى مراجعة المجلدات في Google Drive أولاً.`
+    );
   }
-};
+
+  // 4. Single match -> verify accessibility and reuse
+  if (matchingFolders.length === 1) {
+    const found = matchingFolders[0];
+    const verified = await verifyExistingFolderById(token, found.id, parentId);
+    if (!verified) {
+      throw new Error(
+        `تم العثور على مجلد باسم "${folderName}" لكن تعذر الوصول إليه بصلاحية drive.file.`
+      );
+    }
+    return verified;
+  }
+
+  // 5. Zero matches -> create folder with appProperties and verify immediately
+  const createRes = await fetch(
+    'https://www.googleapis.com/drive/v3/files?fields=id,name,mimeType,webViewLink,appProperties',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: folderName,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [parentId],
+        appProperties,
+      }),
+    }
+  );
+
+  if (!createRes.ok) {
+    const errJson = await createRes.json().catch(() => ({}));
+    if (createRes.status === 401) {
+      clearDriveSession();
+      throw new Error('انتهت صلاحية رمز الوصول أثناء إنشاء المجلد. يرجى إعادة التفويض.');
+    }
+    throw new Error(
+      errJson.error?.message || `فشل إنشاء المجلد "${folderName}" في Google Drive (رمز: ${createRes.status}).`
+    );
+  }
+
+  const created = await createRes.json();
+  const postVerified = await verifyExistingFolderById(token, created.id, parentId);
+  if (!postVerified) {
+    throw new Error(`تم إنشاء المجلد "${folderName}" ولكن تعذر التحقق المباشر من وجوده في Drive.`);
+  }
+
+  return {
+    ...postVerified,
+    reused: false,
+  };
+}
+
+/**
+ * Provisions the full organization hierarchy in the owner's Google Drive:
+ *   AL EQFAL - [Organization Name] - [OrgID]
+ *     └── [Branch Name] - [Branch Code]
+ *           └── [YYYY-MM]
+ */
+export async function provisionOrganizationDriveHierarchy(params: {
+  token: string;
+  org: Organization;
+  branches: Branch[];
+  yearMonth?: string;
+}): Promise<OrgDriveProvisionResult> {
+  const { token, org, branches } = params;
+  const targetYearMonth = params.yearMonth || new Date().toISOString().slice(0, 7);
+
+  // 1. Organization Root Folder
+  const orgFolderName = `AL EQFAL - ${org.name.trim()} - ${org.id}`;
+  const orgFolder = await ensureDriveFolder({
+    token,
+    folderName: orgFolderName,
+    parentId: 'root',
+    existingFolderId: org.driveFolderId || undefined,
+    appProperties: {
+      systemId: 'al_eqfal',
+      role: 'org_root',
+      orgId: org.id,
+    },
+  });
+
+  // 2. Branch Folders & Current Month Folders
+  const branchResults: BranchDriveProvisionResult[] = [];
+  const monthFolderMap: Record<string, DriveMonthFolderRef> = {
+    ...(org.driveMonthFolderIds || {}),
+  };
+
+  for (const branch of branches) {
+    const branchFolderName = `${branch.name.trim()} - ${branch.code.trim()}`;
+    const branchFolder = await ensureDriveFolder({
+      token,
+      folderName: branchFolderName,
+      parentId: orgFolder.folderId,
+      existingFolderId: branch.driveFolderId || undefined,
+      appProperties: {
+        systemId: 'al_eqfal',
+        role: 'branch_folder',
+        orgId: org.id,
+        branchId: branch.id,
+      },
+    });
+
+    const monthKey = `${branch.id}_${targetYearMonth}`;
+    const existingMonthRef = monthFolderMap[monthKey];
+    const monthFolderRef = await ensureDriveFolder({
+      token,
+      folderName: targetYearMonth,
+      parentId: branchFolder.folderId,
+      existingFolderId: existingMonthRef?.folderId || undefined,
+      appProperties: {
+        systemId: 'al_eqfal',
+        role: 'month_folder',
+        orgId: org.id,
+        branchId: branch.id,
+        yearMonth: targetYearMonth,
+      },
+    });
+
+    const monthEntry: DriveMonthFolderRef = {
+      folderId: monthFolderRef.folderId,
+      folderName: monthFolderRef.folderName,
+      webViewLink: monthFolderRef.webViewLink,
+      branchId: branch.id,
+      yearMonth: targetYearMonth,
+      updatedAt: new Date().toISOString(),
+    };
+
+    monthFolderMap[monthKey] = monthEntry;
+
+    branchResults.push({
+      branchId: branch.id,
+      branchFolder,
+      monthFolder: monthEntry,
+    });
+  }
+
+  return {
+    orgFolder,
+    branchResults,
+    monthFolderMap,
+  };
+}
+
+/**
+ * Ensures a specific month folder (YYYY-MM) exists under a specific branch folder on demand
+ */
+export async function ensureBranchMonthDriveFolder(params: {
+  token: string;
+  org: Organization;
+  branch: Branch;
+  yearMonth: string;
+}): Promise<{
+  orgFolder: DriveFolderRef;
+  branchFolder: DriveFolderRef;
+  monthFolder: DriveMonthFolderRef;
+}> {
+  const { token, org, branch, yearMonth } = params;
+  if (!/^\d{4}-\d{2}$/.test(yearMonth)) {
+    throw new Error('صيغة الشهر غير صحيحة. يجب أن تكون بصيغة YYYY-MM (مثل 2026-11).');
+  }
+
+  const orgFolderName = `AL EQFAL - ${org.name.trim()} - ${org.id}`;
+  const orgFolder = await ensureDriveFolder({
+    token,
+    folderName: orgFolderName,
+    parentId: 'root',
+    existingFolderId: org.driveFolderId || undefined,
+    appProperties: {
+      systemId: 'al_eqfal',
+      role: 'org_root',
+      orgId: org.id,
+    },
+  });
+
+  const branchFolderName = `${branch.name.trim()} - ${branch.code.trim()}`;
+  const branchFolder = await ensureDriveFolder({
+    token,
+    folderName: branchFolderName,
+    parentId: orgFolder.folderId,
+    existingFolderId: branch.driveFolderId || undefined,
+    appProperties: {
+      systemId: 'al_eqfal',
+      role: 'branch_folder',
+      orgId: org.id,
+      branchId: branch.id,
+    },
+  });
+
+  const monthKey = `${branch.id}_${yearMonth}`;
+  const existingMonthRef = org.driveMonthFolderIds?.[monthKey];
+  const createdMonth = await ensureDriveFolder({
+    token,
+    folderName: yearMonth,
+    parentId: branchFolder.folderId,
+    existingFolderId: existingMonthRef?.folderId || undefined,
+    appProperties: {
+      systemId: 'al_eqfal',
+      role: 'month_folder',
+      orgId: org.id,
+      branchId: branch.id,
+      yearMonth,
+    },
+  });
+
+  return {
+    orgFolder,
+    branchFolder,
+    monthFolder: {
+      folderId: createdMonth.folderId,
+      folderName: createdMonth.folderName,
+      webViewLink: createdMonth.webViewLink,
+      branchId: branch.id,
+      yearMonth,
+      updatedAt: new Date().toISOString(),
+    },
+  };
+}

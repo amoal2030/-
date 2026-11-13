@@ -13,6 +13,15 @@ export type SupportedLanguage = 'ar' | 'en' | 'ur';
 
 export type ThemeMode = 'dark' | 'light';
 
+export interface DriveMonthFolderRef {
+  folderId: string;
+  folderName: string;
+  webViewLink: string;
+  branchId: string;
+  yearMonth: string;
+  updatedAt: string;
+}
+
 export interface Organization {
   id: string;
   name: string;
@@ -23,6 +32,13 @@ export interface Organization {
   ownerEmail: string;
   ownerName: string;
   driveFolderId?: string;
+  driveFolderName?: string;
+  driveFolderLink?: string;
+  driveAccountEmail?: string;
+  driveAccountName?: string;
+  driveGoogleSub?: string;
+  driveLinkedAt?: string;
+  driveMonthFolderIds?: Record<string, DriveMonthFolderRef>;
   driveConnected: boolean;
   createdAt: string;
   updatedAt: string;
@@ -36,6 +52,9 @@ export interface Branch {
   address?: string;
   phone?: string;
   isActive: boolean;
+  driveFolderId?: string;
+  driveFolderName?: string;
+  driveFolderLink?: string;
   createdAt: string;
 }
 

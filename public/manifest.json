@@ -1,0 +1,15 @@
+{
+  "id": "aleqfal",
+  "name": "AL EQFAL - الإقفال",
+  "short_name": "الإقفال",
+  "description": "نظام ذكي لإدارة حسابات الورديات والمبيعات والمصروفات والفروع والمؤسسات",
+  "start_url": "/ALEQFAL/",
+  "scope": "/ALEQFAL/",
+  "lang": "ar",
+  "dir": "rtl",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#101D30",
+  "theme_color": "#101D30",
+  "icons": []
+}
