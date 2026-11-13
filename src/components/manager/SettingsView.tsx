@@ -15,55 +15,69 @@ import {
   CheckCircle2,
   Info,
   ExternalLink,
-  Laptop,
-  Smartphone,
-  Sparkles,
   AlertCircle,
   Clock,
-  KeyRound,
   FolderPlus,
   FolderCheck,
   RefreshCw,
-  Trash2,
   ShieldAlert,
+  Link2,
+  Unlink,
+  FolderTree,
 } from 'lucide-react';
 import {
   requestDriveAuthorization,
   getActiveDriveSession,
   clearDriveSession,
-  inspectOrCreateTestFolder,
+  getDriveOAuthClientConfig,
+  provisionOrganizationDriveHierarchy,
   DriveTokenSession,
-  TestFolderInspectionResult,
 } from '../../services/driveService';
 
 export const SettingsView: React.FC = () => {
-  const { currentOrg, currentBranch, branches, userProfile, setCurrentBranch, currentUser } = useAuth();
-  const { language, setLanguage, t, direction } = useLanguage();
-  const { theme, toggleTheme, setTheme } = useTheme();
+  const {
+    currentOrg,
+    currentBranch,
+    branches,
+    userProfile,
+    setCurrentBranch,
+    currentUser,
+    saveDriveConnection,
+    disconnectDriveConnection,
+  } = useAuth();
+  const { language, setLanguage } = useLanguage();
+  const { theme, setTheme } = useTheme();
 
   const [savedNotice, setSavedNotice] = useState(false);
 
-  // Google Drive Phase 1 In-Memory Sandbox States (Zero Firestore Writes)
+  // Google Drive Phase 1 States (Access Token remains strictly in RAM)
   const [driveSession, setDriveSession] = useState<DriveTokenSession | null>(() => getActiveDriveSession());
   const [driveLoading, setDriveLoading] = useState(false);
-  const [folderLoading, setFolderLoading] = useState(false);
-  const [folderResult, setFolderResult] = useState<TestFolderInspectionResult | null>(null);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [disconnectLoading, setDisconnectLoading] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [driveError, setDriveError] = useState<string | null>(null);
+  const [driveSuccess, setDriveSuccess] = useState<string | null>(null);
   const [remainingMinutes, setRemainingMinutes] = useState<number>(0);
 
-  // Verify that the logged in user is the verified organization owner
+  const oauthConfig = getDriveOAuthClientConfig();
+  const isOAuthConfigured = oauthConfig.source === 'vite_env' && Boolean(oauthConfig.clientId);
+
+  // Strict organization owner verification (never rely on role === 'manager' alone)
   const isOrgOwner = Boolean(
     currentUser &&
-    currentOrg &&
-    userProfile?.role === 'manager' &&
-    currentUser.uid === currentOrg.ownerId
+      currentOrg &&
+      userProfile?.role === 'manager' &&
+      userProfile?.isActive &&
+      currentUser.uid === currentOrg.ownerId
   );
 
-  // Extract the Google provider specifically (do NOT assume providerData[0])
+  // Extract the Google provider specifically (never assume providerData[0])
   const googleProvider = currentUser?.providerData?.find((p) => p.providerId === 'google.com') || null;
-  const isGoogleProviderPresent = Boolean(googleProvider);
+  const isGoogleProviderPresent = Boolean(googleProvider?.uid);
+  const currentYearMonth = new Date().toISOString().slice(0, 7);
 
-  // Dynamic token lifetime countdown
+  // Dynamic in-memory token lifetime countdown
   useEffect(() => {
     const updateRemaining = () => {
       const session = getActiveDriveSession();
@@ -81,18 +95,26 @@ export const SettingsView: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const handleAuthorizeDrive = async () => {
+  const handleConnectDrive = async () => {
     setDriveError(null);
-    setFolderResult(null);
+    setDriveSuccess(null);
+    setConfirmDisconnect(false);
 
-    if (!isOrgOwner) {
-      setDriveError('عفواً، هذا الإجراء مخصص حصرياً لمالك المؤسسة المعتمد في السجل.');
+    if (!currentOrg || !isOrgOwner) {
+      setDriveError('عفواً، ربط Google Drive مقتصر حصراً على مالك المؤسسة المعتمد.');
       return;
     }
 
-    if (!googleProvider?.uid) {
+    if (!isGoogleProviderPresent || !googleProvider?.uid) {
       setDriveError(
         'لم يتم العثور على مزود Google مرتبط بحسابك في Firebase. يرجى تسجيل الدخول بحساب Google المعتمد للمالك.'
+      );
+      return;
+    }
+
+    if (!isOAuthConfigured) {
+      setDriveError(
+        'متغير البيئة VITE_GOOGLE_DRIVE_CLIENT_ID غير مضبوط في نسخة البناء الحالية. يرجى ضبطه قبل تفعيل الربط.'
       );
       return;
     }
@@ -101,50 +123,130 @@ export const SettingsView: React.FC = () => {
     try {
       const session = await requestDriveAuthorization(
         googleProvider.uid,
-        googleProvider.email || currentOrg?.ownerEmail || ''
+        googleProvider.email || currentOrg.ownerEmail || ''
       );
       setDriveSession(session);
-      const diffMs = session.expiresAt - Date.now();
-      setRemainingMinutes(Math.max(0, Math.floor(diffMs / 60000)));
+      setRemainingMinutes(Math.max(0, Math.floor((session.expiresAt - Date.now()) / 60000)));
+
+      const provisionResult = await provisionOrganizationDriveHierarchy({
+        token: session.accessToken,
+        org: currentOrg,
+        branches,
+        yearMonth: currentYearMonth,
+      });
+
+      await saveDriveConnection({
+        driveAccountEmail: session.email,
+        driveAccountName: session.name,
+        driveGoogleSub: session.sub,
+        orgFolderId: provisionResult.orgFolder.folderId,
+        orgFolderName: provisionResult.orgFolder.folderName,
+        orgFolderLink: provisionResult.orgFolder.webViewLink,
+        branchFolders: provisionResult.branchResults.map((r) => ({
+          branchId: r.branchId,
+          folderId: r.branchFolder.folderId,
+          folderName: r.branchFolder.folderName,
+          webViewLink: r.branchFolder.webViewLink,
+        })),
+        monthFolderMap: provisionResult.monthFolderMap,
+      });
+
+      setDriveSuccess(
+        `تم ربط حساب Google Drive (${session.email}) والتحقق من مجلد المؤسسة "${provisionResult.orgFolder.folderName}" وتهيئة مجلدات الفروع للشهر ${currentYearMonth} بنجاح.`
+      );
     } catch (err: any) {
-      setDriveError(err?.message || 'فشل تفويض Google Drive.');
-      setDriveSession(null);
+      setDriveError(err?.message || 'تعذر إتمام ربط Google Drive.');
+      setDriveSession(getActiveDriveSession());
     } finally {
       setDriveLoading(false);
     }
   };
 
-  const handleInspectFolder = async () => {
+  const handleSyncDriveFolders = async () => {
     setDriveError(null);
-    setFolderResult(null);
+    setDriveSuccess(null);
 
-    const session = getActiveDriveSession();
-    if (!session?.accessToken) {
-      setDriveError('انتهت صلاحية جلسة التفويض المؤقتة في الذاكرة. يرجى إعادة التفويض أولاً.');
-      setDriveSession(null);
+    if (!currentOrg || !isOrgOwner) {
+      setDriveError('مزامنة مجلدات Drive مقتصرة حصراً على مالك المؤسسة المعتمد.');
       return;
     }
 
-    setFolderLoading(true);
+    if (!isGoogleProviderPresent || !googleProvider?.uid) {
+      setDriveError('يلزم تسجيل الدخول بحساب Google المعتمد للمالك لإعادة التفويض ومزامنة المجلدات.');
+      return;
+    }
+
+    setSyncLoading(true);
     try {
-      const result = await inspectOrCreateTestFolder(session.accessToken);
-      setFolderResult(result);
-      if (result.status === 'error') {
-        setDriveError(result.message);
+      let session = getActiveDriveSession();
+      if (!session) {
+        if (!isOAuthConfigured) {
+          throw new Error('متغير البيئة VITE_GOOGLE_DRIVE_CLIENT_ID غير مضبوط في نسخة البناء الحالية.');
+        }
+        session = await requestDriveAuthorization(
+          googleProvider.uid,
+          googleProvider.email || currentOrg.ownerEmail || ''
+        );
+        setDriveSession(session);
+        setRemainingMinutes(Math.max(0, Math.floor((session.expiresAt - Date.now()) / 60000)));
       }
+
+      const provisionResult = await provisionOrganizationDriveHierarchy({
+        token: session.accessToken,
+        org: currentOrg,
+        branches,
+        yearMonth: currentYearMonth,
+      });
+
+      await saveDriveConnection({
+        driveAccountEmail: session.email,
+        driveAccountName: session.name,
+        driveGoogleSub: session.sub,
+        orgFolderId: provisionResult.orgFolder.folderId,
+        orgFolderName: provisionResult.orgFolder.folderName,
+        orgFolderLink: provisionResult.orgFolder.webViewLink,
+        branchFolders: provisionResult.branchResults.map((r) => ({
+          branchId: r.branchId,
+          folderId: r.branchFolder.folderId,
+          folderName: r.branchFolder.folderName,
+          webViewLink: r.branchFolder.webViewLink,
+        })),
+        monthFolderMap: provisionResult.monthFolderMap,
+      });
+
+      setDriveSuccess(
+        `تم التحقق من مجلد المؤسسة وتحديث مجلدات (${provisionResult.branchResults.length}) فرع لشهر ${currentYearMonth} بنجاح.`
+      );
     } catch (err: any) {
-      setDriveError(err?.message || 'حدث خطأ غير متوقع أثناء فحص مجلد الاختبار.');
+      setDriveError(err?.message || 'حدث خطأ أثناء مزامنة مجلدات Google Drive.');
+      setDriveSession(getActiveDriveSession());
     } finally {
-      setFolderLoading(false);
+      setSyncLoading(false);
     }
   };
 
-  const handleClearDriveSession = () => {
-    clearDriveSession();
-    setDriveSession(null);
-    setFolderResult(null);
+  const handleConfirmDisconnect = async () => {
     setDriveError(null);
-    setRemainingMinutes(0);
+    setDriveSuccess(null);
+
+    if (!isOrgOwner) {
+      setDriveError('فصل ربط Google Drive مقتصر حصراً على مالك المؤسسة المعتمد.');
+      return;
+    }
+
+    setDisconnectLoading(true);
+    try {
+      await disconnectDriveConnection();
+      clearDriveSession();
+      setDriveSession(null);
+      setRemainingMinutes(0);
+      setConfirmDisconnect(false);
+      setDriveSuccess('تم فصل ربط Google Drive من إعدادات المؤسسة مع الإبقاء على جميع الملفات والسجلات دون حذف.');
+    } catch (err: any) {
+      setDriveError(err?.message || 'تعذر فصل ربط Google Drive.');
+    } finally {
+      setDisconnectLoading(false);
+    }
   };
 
   const handleLanguageChange = (lang: SupportedLanguage) => {
@@ -268,7 +370,7 @@ export const SettingsView: React.FC = () => {
             </div>
           </section>
 
-          {/* Card: Google Drive Phase 1 Sandbox (Zero Firestore Writes) */}
+          {/* Card 2: Google Drive Organization Link (Owner Only) */}
           <section className="bg-white dark:bg-[#0c1829] rounded-2xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 shadow-sm space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-3">
@@ -277,29 +379,40 @@ export const SettingsView: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <span>ربط Google Drive التجريبي — المرحلة الأولى</span>
+                    <span>ربط Google Drive</span>
                   </h3>
                   <span className="text-xs text-slate-500 dark:text-slate-400">
-                    مخصص لمالك المؤسسة المعتمد فقط • جلسة مؤقتة في الذاكرة (لا كتابة في قاعدة البيانات)
+                    ربط حساب Drive الخاص بمالك المؤسسة للأرشفة اللامركزية • نطاق drive.file فقط
                   </span>
                 </div>
               </div>
 
-              {/* Status Badge */}
-              {driveSession ? (
-                <div className="flex items-center gap-2 px-3 py-1 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-500 text-xs font-bold">
-                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                  <span>مفوض مؤقتاً للجلسة الحالية</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 px-3 py-1 rounded-xl bg-slate-100 dark:bg-[#070e17] border border-slate-300 dark:border-slate-800 text-slate-500 dark:text-slate-400 text-xs font-medium">
-                  <span className="w-2 h-2 rounded-full bg-slate-400" />
-                  <span>غير مفوض (في الذاكرة)</span>
-                </div>
-              )}
+              {/* Connection Status Badge */}
+              <div className="flex flex-wrap items-center gap-2">
+                {currentOrg?.driveConnected ? (
+                  <div className="flex items-center gap-2 px-3 py-1 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-500 text-xs font-bold">
+                    <span className="w-2 h-2 rounded-full bg-amber-400" />
+                    <span>مرتبط بحساب المالك</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 px-3 py-1 rounded-xl bg-slate-100 dark:bg-[#070e17] border border-slate-300 dark:border-slate-800 text-slate-500 dark:text-slate-400 text-xs font-medium">
+                    <span className="w-2 h-2 rounded-full bg-slate-400" />
+                    <span>غير مرتبط</span>
+                  </div>
+                )}
+
+                {driveSession && (
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-[#070e17] border border-amber-500/30 text-amber-500 text-[11px] font-bold">
+                    <Clock className="w-3 h-3" />
+                    <span>
+                      جلسة تفويض نشطة: {remainingMinutes > 0 ? `${remainingMinutes} د` : '< 1 د'}
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Error or Notice Alert */}
+            {/* Alerts */}
             {driveError && (
               <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-500 text-xs space-y-1">
                 <div className="flex items-center gap-2 font-bold">
@@ -310,209 +423,274 @@ export const SettingsView: React.FC = () => {
               </div>
             )}
 
-            {/* Owner Pre-Check Notice */}
+            {driveSuccess && (
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs space-y-1">
+                <div className="flex items-center gap-2 font-bold">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>حالة ربط Google Drive:</span>
+                </div>
+                <p className="pr-6 leading-relaxed text-slate-700 dark:text-slate-300">{driveSuccess}</p>
+              </div>
+            )}
+
+            {/* Missing VITE_GOOGLE_DRIVE_CLIENT_ID Notice */}
+            {isOrgOwner && !isOAuthConfigured && (
+              <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/25 text-xs space-y-1.5">
+                <div className="flex items-center gap-2 font-bold text-amber-500">
+                  <Info className="w-4 h-4 shrink-0" />
+                  <span>إعداد متغير البيئة مطلوب قبل الربط الفعلي</span>
+                </div>
+                <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                  لم يُعثر على متغير البيئة{' '}
+                  <code className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 font-mono text-amber-500">
+                    VITE_GOOGLE_DRIVE_CLIENT_ID
+                  </code>{' '}
+                  في نسخة التشغيل الحالية. يجب تمرير معرّف OAuth 2.0 Web Client ID أثناء بناء التطبيق وتفعيل النطاق المنشور في Google Cloud Console.
+                </p>
+              </div>
+            )}
+
+            {/* Strict Owner Gate */}
             {!isOrgOwner ? (
               <div className="p-4 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-200 dark:border-slate-800 text-xs space-y-2">
                 <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300 font-bold">
                   <ShieldAlert className="w-4 h-4 text-amber-500" />
-                  <span>خاص بمالك المنشأة المعتمد:</span>
+                  <span>خاص بمالك المؤسسة المعتمد فقط:</span>
                 </div>
                 <p className="text-slate-500 dark:text-slate-400 leading-relaxed">
-                  حسابك الحالي مسجل بالدور ({userProfile?.role || 'مستخدم'}). هذا الاختبار متاح حصرياً لحساب مالك المنشأة المسجل ({currentOrg?.ownerEmail || 'المالك'}).
+                  لا يُسمح للموظفين أو مديري الفروع بربط أو تعديل إعدادات Google Drive. هذا الإجراء متاح حصرياً لحساب مالك المؤسسة ({currentOrg?.ownerEmail || 'المالك'}).
                 </p>
               </div>
             ) : !isGoogleProviderPresent ? (
               <div className="p-4 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-200 dark:border-slate-800 text-xs space-y-2">
                 <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300 font-bold">
                   <AlertCircle className="w-4 h-4 text-amber-500" />
-                  <span>يلزم تسجيل الدخول بحساب Google:</span>
+                  <span>يلزم تسجيل الدخول بحساب Google المعتمد:</span>
                 </div>
                 <p className="text-slate-500 dark:text-slate-400 leading-relaxed">
-                  تم تسجيل دخولك بالبريد وكلمة المرور دون مزود Google في Firebase. لمطابقة الهوية بأمان، يرجى تسجيل الخروج ثم الدخول باستخدام زر Google للمالك.
+                  حسابك الحالي غير مرتبط بمزود Google في جلسة Firebase. لمطابقة هوية المالك بأمان قبل منح صلاحية Drive، يرجى تسجيل الدخول باستخدام زر Google.
                 </p>
               </div>
-            ) : (
+            ) : currentOrg?.driveConnected ? (
+              /* Connected State */
               <div className="space-y-4">
-                {/* Active Session Details */}
-                {driveSession ? (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-200 dark:border-slate-800 space-y-1">
-                        <span className="text-slate-400 block text-[11px]">حساب Google المتحقق منه</span>
-                        <span className="font-bold text-slate-900 dark:text-white truncate block">
-                          {driveSession.email}
-                        </span>
-                        <span className="text-[10px] text-amber-500 block">
-                          {driveSession.name || 'مالك المؤسسة'}
+                {/* Linked Account & Root Folder Summary */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+                  <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-200 dark:border-slate-800 space-y-1">
+                    <span className="text-slate-400 block text-[11px]">حساب Google المرتبط</span>
+                    <span className="font-bold text-slate-900 dark:text-white truncate block">
+                      {currentOrg.driveAccountEmail || currentOrg.ownerEmail}
+                    </span>
+                    <span className="text-[11px] text-amber-500 block truncate">
+                      {currentOrg.driveAccountName || currentOrg.ownerName}
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-200 dark:border-slate-800 space-y-1">
+                    <span className="text-slate-400 block text-[11px]">تاريخ الربط والتحقق</span>
+                    <span className="font-bold text-slate-900 dark:text-white block">
+                      {currentOrg.driveLinkedAt
+                        ? new Date(currentOrg.driveLinkedAt).toLocaleString('ar-SA')
+                        : 'مربوط'}
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400 truncate block">
+                      Sub: {currentOrg.driveGoogleSub || 'موثق'}
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-200 dark:border-slate-800 space-y-1">
+                    <span className="text-slate-400 block text-[11px]">تفويض الجلسة المؤقت (RAM)</span>
+                    <span className="font-bold text-slate-900 dark:text-white block">
+                      {driveSession
+                        ? `نشط (${remainingMinutes > 0 ? `${remainingMinutes} دقيقة متبقية` : 'أقل من دقيقة'})`
+                        : 'منتهٍ / يتطلب إعادة تفويض عند المزامنة'}
+                    </span>
+                    <span className="text-[10px] text-slate-400 block">
+                      لا يُخزن أي Access Token في Firestore
+                    </span>
+                  </div>
+                </div>
+
+                {/* Organization Root Folder Card */}
+                {currentOrg.driveFolderId && (
+                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-200 dark:border-slate-800 space-y-3 text-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
+                        <FolderCheck className="w-4 h-4 text-amber-500 shrink-0" />
+                        <span>مجلد المؤسسة في Drive:</span>
+                        <span className="text-amber-500 font-mono text-[11px] sm:text-xs">
+                          {currentOrg.driveFolderName || `AL EQFAL - ${currentOrg.name} - ${currentOrg.id}`}
                         </span>
                       </div>
 
-                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-200 dark:border-slate-800 space-y-1">
-                        <span className="text-slate-400 block text-[11px]">معرف مزود Google (Sub ID)</span>
-                        <span className="font-mono text-slate-700 dark:text-slate-300 truncate block text-[11px]">
-                          {driveSession.sub}
-                        </span>
-                        <span className="text-[10px] text-slate-400 block">
-                          مطابق لـ Firebase Google UID
-                        </span>
-                      </div>
-
-                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-200 dark:border-slate-800 space-y-1">
-                        <span className="text-slate-400 block text-[11px] flex items-center gap-1">
-                          <Clock className="w-3 h-3 text-amber-500" />
-                          <span>صلاحية التوكن المتبقية</span>
-                        </span>
-                        <span className="font-bold text-amber-500 text-sm block">
-                          {remainingMinutes > 0 ? `${remainingMinutes} دقيقة` : 'أقل من دقيقة'}
-                        </span>
-                        <span className="text-[10px] text-slate-400 block">
-                          مشتقة من expires_in الفعلي
-                        </span>
-                      </div>
+                      {currentOrg.driveFolderLink && (
+                        <a
+                          href={currentOrg.driveFolderLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 font-bold text-xs inline-flex items-center gap-1.5 transition-colors"
+                        >
+                          <span>فتح في Google Drive</span>
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      )}
                     </div>
 
-                    {/* Temporary Session Notice */}
-                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-slate-700 dark:text-slate-300 space-y-1">
-                      <div className="flex items-center gap-1.5 font-bold text-amber-500">
-                        <Info className="w-3.5 h-3.5" />
-                        <span>تنبيه الجلسة المؤقتة (Phase 1):</span>
-                      </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                        رمز الوصول محفوظ في ذاكرة المتصفح فقط خلال هذه الجلسة، ولم يتم ولن يتم حفظ أي رمز أو معرّف في Firestore أو التخزين المحلي. تحديث الصفحة أو إغلاقها سيتطلب إعادة منح التفويض.
-                      </p>
+                    <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate select-all">
+                      Folder ID: {currentOrg.driveFolderId}
                     </div>
 
-                    {/* Actions */}
-                    <div className="flex flex-wrap items-center gap-3 pt-1">
-                      <button
-                        type="button"
-                        onClick={handleInspectFolder}
-                        disabled={folderLoading}
-                        className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 disabled:opacity-50 shadow-sm flex items-center gap-2 transition-all active:scale-95"
-                      >
-                        {folderLoading ? (
-                          <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
-                        ) : (
-                          <FolderPlus className="w-4 h-4 text-slate-950" />
-                        )}
-                        <span>
-                          {folderLoading ? 'جاري فحص مجلد الاختبار في Drive...' : 'فحص / إنشاء مجلد الاختبار (AL EQFAL - TEST)'}
-                        </span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={handleClearDriveSession}
-                        className="px-3.5 py-2.5 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 bg-slate-100 dark:bg-[#070e17] border border-slate-300 dark:border-slate-800 flex items-center gap-2 transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>مسح التوكن من الذاكرة</span>
-                      </button>
-                    </div>
-
-                    {/* Inspection Result Card */}
-                    {folderResult && (
-                      <div className="p-4 rounded-xl border space-y-3 bg-slate-50 dark:bg-[#070e17] border-slate-200 dark:border-slate-800 text-xs">
-                        <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200/60 dark:border-slate-800/60">
-                          <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
-                            <FolderCheck className="w-4 h-4 text-amber-500" />
-                            <span>نتيجة فحص مجلد الاختبار:</span>
-                          </div>
-                          <span
-                            className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold ${
-                              folderResult.status === 'created_new' || folderResult.status === 'found_single'
-                                ? 'bg-amber-500/15 text-amber-500 border border-amber-500/30'
-                                : 'bg-rose-500/15 text-rose-500 border border-rose-500/30'
-                            }`}
-                          >
-                            {folderResult.status === 'created_new'
-                              ? 'تم إنشاء مجلد جديد'
-                              : folderResult.status === 'found_single'
-                              ? 'تم اعتماد مجلد قائم'
-                              : folderResult.status === 'found_multiple'
-                              ? 'تعدد المجلدات (توقف أمني)'
-                              : 'تعثر الفحص'}
-                          </span>
+                    {/* Linked Branches & Current Month Folders */}
+                    {branches.length > 0 && (
+                      <div className="pt-2 border-t border-slate-200/70 dark:border-slate-800/70 space-y-2">
+                        <div className="flex items-center gap-1.5 font-bold text-slate-700 dark:text-slate-300 text-[11px]">
+                          <FolderTree className="w-3.5 h-3.5 text-amber-500" />
+                          <span>مجلدات الفروع وشهر {currentYearMonth}:</span>
                         </div>
-
-                        <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
-                          {folderResult.message}
-                        </p>
-
-                        {folderResult.folderId && (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 font-mono text-[11px]">
-                            <div className="p-2.5 rounded-lg bg-white dark:bg-[#0c1829] border border-slate-200 dark:border-slate-800">
-                              <span className="text-slate-400 block text-[10px] font-sans">معرّف المجلد في Drive (Folder ID)</span>
-                              <span className="text-amber-500 font-bold truncate block select-all">
-                                {folderResult.folderId}
-                              </span>
-                            </div>
-
-                            <div className="p-2.5 rounded-lg bg-white dark:bg-[#0c1829] border border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                              <div>
-                                <span className="text-slate-400 block text-[10px] font-sans">معاينة مباشرة</span>
-                                <span className="text-slate-700 dark:text-slate-300 font-sans">
-                                  {folderResult.folderName || 'AL EQFAL - TEST'}
-                                </span>
-                              </div>
-                              {folderResult.webViewLink && (
-                                <a
-                                  href={folderResult.webViewLink}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="px-2.5 py-1 rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 font-bold font-sans text-xs flex items-center gap-1 transition-colors"
-                                >
-                                  <span>فتح المجلد</span>
-                                  <ExternalLink className="w-3 h-3" />
-                                </a>
-                              )}
-                            </div>
-                          </div>
-                        )}
-
-                        {folderResult.status === 'found_multiple' && folderResult.matchingFolderIds && (
-                          <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 space-y-1 text-[11px]">
-                            <span className="text-rose-500 font-bold block">معرفات المجلدات المتطابقة في حساب Drive:</span>
-                            <div className="space-y-0.5 font-mono text-slate-700 dark:text-slate-300">
-                              {folderResult.matchingFolderIds.map((id) => (
-                                <div key={id} className="truncate select-all bg-white dark:bg-[#0c1829] px-2 py-1 rounded border border-rose-500/20">
-                                  {id}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {branches.map((branch) => {
+                            const monthKey = `${branch.id}_${currentYearMonth}`;
+                            const monthRef = currentOrg.driveMonthFolderIds?.[monthKey];
+                            return (
+                              <div
+                                key={branch.id}
+                                className="p-2.5 rounded-lg bg-white dark:bg-[#0c1829] border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2"
+                              >
+                                <div className="min-w-0">
+                                  <div className="font-bold text-slate-800 dark:text-slate-200 truncate">
+                                    {branch.name} ({branch.code})
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 truncate">
+                                    {branch.driveFolderId
+                                      ? monthRef?.folderId
+                                        ? `مجلد الفرع + ${currentYearMonth} جاهزان`
+                                        : 'مجلد الفرع مربوط'
+                                      : 'بانتظار مزامنة مجلد الفرع'}
+                                  </div>
                                 </div>
-                              ))}
-                            </div>
-                            <span className="text-[10px] text-slate-500 dark:text-slate-400 block mt-1">
-                              تم التوقف فوراً دون اختيار عشوائي. يرجى حذف المجلدات الزائدة أو دمجها في Google Drive ثم إعادة الفحص.
-                            </span>
-                          </div>
-                        )}
+                                {branch.driveFolderLink && (
+                                  <a
+                                    href={monthRef?.webViewLink || branch.driveFolderLink}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-2 py-1 rounded bg-slate-100 dark:bg-[#070e17] hover:text-amber-500 text-slate-600 dark:text-slate-300 text-[10px] font-bold shrink-0 inline-flex items-center gap-1"
+                                  >
+                                    <span>فتح</span>
+                                    <ExternalLink className="w-3 h-3" />
+                                  </a>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                   </div>
-                ) : (
-                  /* Initial Authorization Button */
-                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-200 dark:border-slate-800 space-y-3">
-                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                      لبدء فحص أو إنشاء مجلد الاختبار <code className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 font-mono text-amber-500">AL EQFAL - TEST</code>، يلزم تفويض حساب Google الخاص بمالك المؤسسة ({googleProvider?.email || currentOrg?.ownerEmail}).
-                    </p>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={handleAuthorizeDrive}
-                        disabled={driveLoading}
-                        className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 disabled:opacity-50 shadow-sm flex items-center gap-2 transition-all active:scale-95"
-                      >
-                        {driveLoading ? (
-                          <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
-                        ) : (
-                          <KeyRound className="w-4 h-4 text-slate-950" />
-                        )}
-                        <span>
-                          {driveLoading ? 'جاري التحقق من هوية Google...' : 'بدء تفويض Google Drive المؤقت للاختبار'}
-                        </span>
-                      </button>
-                    </div>
-                  </div>
                 )}
+
+                {/* Action Buttons */}
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleSyncDriveFolders}
+                    disabled={syncLoading || driveLoading || disconnectLoading || !isOAuthConfigured}
+                    className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 disabled:opacity-50 shadow-sm flex items-center gap-2 transition-all active:scale-95"
+                  >
+                    {syncLoading ? (
+                      <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
+                    ) : (
+                      <FolderPlus className="w-4 h-4 text-slate-950" />
+                    )}
+                    <span>
+                      {syncLoading
+                        ? 'جاري مزامنة المجلدات...'
+                        : 'مزامنة مجلدات الفروع والشهر الحالي'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleConnectDrive}
+                    disabled={driveLoading || syncLoading || disconnectLoading || !isOAuthConfigured}
+                    className="px-3.5 py-2.5 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-[#070e17] hover:border-amber-500/50 border border-slate-300 dark:border-slate-800 disabled:opacity-50 flex items-center gap-2 transition-colors"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${driveLoading ? 'animate-spin' : ''}`} />
+                    <span>{driveLoading ? 'جاري إعادة الربط...' : 'إعادة ربط'}</span>
+                  </button>
+
+                  {!confirmDisconnect ? (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDisconnect(true)}
+                      disabled={driveLoading || syncLoading || disconnectLoading}
+                      className="px-3.5 py-2.5 rounded-xl text-xs font-bold text-rose-500 bg-rose-500/10 hover:bg-rose-500/15 border border-rose-500/25 disabled:opacity-50 flex items-center gap-2 transition-colors"
+                    >
+                      <Unlink className="w-3.5 h-3.5" />
+                      <span>فصل الاتصال</span>
+                    </button>
+                  ) : (
+                    <div className="w-full p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 flex flex-wrap items-center justify-between gap-3 text-xs">
+                      <span className="text-slate-700 dark:text-slate-200 font-medium">
+                        هل تريد فصل ربط Google Drive؟ لن يتم حذف أي ملفات في Drive أو سجلات في النظام.
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleConfirmDisconnect}
+                          disabled={disconnectLoading}
+                          className="px-3 py-1.5 rounded-lg bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs disabled:opacity-50"
+                        >
+                          {disconnectLoading ? 'جاري الفصل...' : 'تأكيد الفصل'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDisconnect(false)}
+                          disabled={disconnectLoading}
+                          className="px-3 py-1.5 rounded-lg bg-white dark:bg-[#0c1829] border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold text-xs"
+                        >
+                          إلغاء
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              /* Disconnected State — Primary "ربط Google Drive" Action */
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-[#070e17] border border-slate-200 dark:border-slate-800 space-y-3.5 text-xs">
+                <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                  عند ربط حساب{' '}
+                  <span className="font-bold text-amber-500">
+                    {googleProvider?.email || currentOrg?.ownerEmail}
+                  </span>
+                  ، سيطلب النظام تفويض نطاق{' '}
+                  <code className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 font-mono text-amber-500">
+                    drive.file
+                  </code>{' '}
+                  فقط، ويتحقق من هوية المالك، ثم ينشئ مجلد المؤسسة{' '}
+                  <code className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 font-mono text-amber-500">
+                    AL EQFAL - {currentOrg?.name}
+                  </code>{' '}
+                  ومجلدات الفروع داخل Google Drive الخاص بالمالك.
+                </p>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleConnectDrive}
+                    disabled={driveLoading || !isOAuthConfigured}
+                    className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 disabled:opacity-50 shadow-sm flex items-center gap-2 transition-all active:scale-95"
+                  >
+                    {driveLoading ? (
+                      <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
+                    ) : (
+                      <Link2 className="w-4 h-4 text-slate-950" />
+                    )}
+                    <span>
+                      {driveLoading ? 'جاري التفويض وتهيئة المجلدات...' : 'ربط Google Drive'}
+                    </span>
+                  </button>
+                </div>
               </div>
             )}
           </section>

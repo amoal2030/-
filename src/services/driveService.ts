@@ -13,7 +13,6 @@
  * - Idempotent folder provisioning with pagination (nextPageToken) and multi-match halt
  */
 
-import firebaseConfig from '../../firebase-applet-config.json';
 import { Branch, DriveMonthFolderRef, Organization } from '../types';
 
 export interface DriveTokenSession {
@@ -50,22 +49,16 @@ export interface OrgDriveProvisionResult {
 let activeSession: DriveTokenSession | null = null;
 
 /**
- * Resolves the configured Google OAuth Web Client ID.
- * Priority:
- * 1. Explicit production build environment variable VITE_GOOGLE_DRIVE_CLIENT_ID (recommended for https://amoal2030.github.io)
- * 2. Fallback to oAuthClientId in firebase-applet-config.json if configured with the published origin
+ * Resolves the configured Google OAuth Web Client ID strictly from VITE_GOOGLE_DRIVE_CLIENT_ID.
+ * Never falls back to AI Studio preview OAuth or invents any Client ID.
  */
 export const getDriveOAuthClientConfig = (): {
   clientId: string;
-  source: 'vite_env' | 'firebase_config' | 'missing';
+  source: 'vite_env' | 'missing';
 } => {
   const envClientId = (import.meta as any).env?.VITE_GOOGLE_DRIVE_CLIENT_ID?.trim();
   if (envClientId) {
     return { clientId: envClientId, source: 'vite_env' };
-  }
-  const fbClientId = firebaseConfig.oAuthClientId?.trim();
-  if (fbClientId) {
-    return { clientId: fbClientId, source: 'firebase_config' };
   }
   return { clientId: '', source: 'missing' };
 };
@@ -115,7 +108,7 @@ export const requestDriveAuthorization = async (
   const { clientId } = getDriveOAuthClientConfig();
   if (!clientId) {
     throw new Error(
-      'لم يتم العثور على OAuth Client ID مهيأ. يرجى ضبط VITE_GOOGLE_DRIVE_CLIENT_ID في إعدادات البناء أو oAuthClientId في التكوين.'
+      'متغير البيئة VITE_GOOGLE_DRIVE_CLIENT_ID غير متاح في بيئة التشغيل الحالية. يرجى ضبطه بمعرّف OAuth 2.0 Web Client ID المخصص للنطاق المنشور.'
     );
   }
 

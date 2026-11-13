@@ -33,12 +33,22 @@ import {
   serverTimestamp,
   writeBatch,
   runTransaction,
+  deleteField,
 } from 'firebase/firestore';
-import { Organization, UserProfile, Branch, AuditLog, ShiftClosing, ClosingStatus } from '../types';
+import {
+  Organization,
+  UserProfile,
+  Branch,
+  AuditLog,
+  ShiftClosing,
+  ClosingStatus,
+  DriveMonthFolderRef,
+} from '../types';
 import {
   calculateShiftTotals,
   generateDeterministicClosingId,
 } from '../utils/accounting';
+import { clearDriveSession } from '../services/driveService';
 
 interface AuthContextType {
   currentUser: FirebaseUser | null;
@@ -96,6 +106,22 @@ interface AuthContextType {
     expenses: number;
     correctionReason: string;
   }) => Promise<void>;
+  saveDriveConnection: (data: {
+    driveAccountEmail: string;
+    driveAccountName: string;
+    driveGoogleSub: string;
+    orgFolderId: string;
+    orgFolderName: string;
+    orgFolderLink: string;
+    branchFolders?: Array<{
+      branchId: string;
+      folderId: string;
+      folderName: string;
+      webViewLink: string;
+    }>;
+    monthFolderMap?: Record<string, DriveMonthFolderRef>;
+  }) => Promise<void>;
+  disconnectDriveConnection: () => Promise<void>;
   logout: () => Promise<void>;
   refreshTenantData: () => Promise<void>;
   setCurrentBranch: (branch: Branch) => void;
@@ -996,9 +1022,225 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  /**
+   * Saves non-secret Google Drive link metadata & folder IDs to Firestore.
+   * Strictly enforces organization owner identity (currentUser.uid === currentOrg.ownerId).
+   * Never stores any OAuth access token or secret.
+   */
+  const saveDriveConnection = async (data: {
+    driveAccountEmail: string;
+    driveAccountName: string;
+    driveGoogleSub: string;
+    orgFolderId: string;
+    orgFolderName: string;
+    orgFolderLink: string;
+    branchFolders?: Array<{
+      branchId: string;
+      folderId: string;
+      folderName: string;
+      webViewLink: string;
+    }>;
+    monthFolderMap?: Record<string, DriveMonthFolderRef>;
+  }) => {
+    if (!currentUser || !currentOrg || !userProfile) {
+      throw new Error('يجب تسجيل الدخول بحساب مالك المؤسسة لحفظ بيانات ربط Drive.');
+    }
+    if (
+      userProfile.role !== 'manager' ||
+      !userProfile.isActive ||
+      currentUser.uid !== currentOrg.ownerId
+    ) {
+      throw new Error('ربط Google Drive مقتصر حصراً على مالك المؤسسة المعتمد.');
+    }
+    if (!data.orgFolderId || !data.driveGoogleSub || !data.driveAccountEmail) {
+      throw new Error('بيانات مجلد المؤسسة أو هوية Google غير مكتملة.');
+    }
+
+    const nowIso = new Date().toISOString();
+    const orgRef = doc(db, 'organizations', currentOrg.id);
+    const batch = writeBatch(db);
+
+    const orgUpdatePayload: Record<string, any> = {
+      driveConnected: true,
+      driveFolderId: data.orgFolderId,
+      driveFolderName: data.orgFolderName,
+      driveFolderLink: data.orgFolderLink,
+      driveAccountEmail: data.driveAccountEmail,
+      driveAccountName: data.driveAccountName,
+      driveGoogleSub: data.driveGoogleSub,
+      driveLinkedAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    if (data.monthFolderMap) {
+      orgUpdatePayload.driveMonthFolderIds = data.monthFolderMap;
+    }
+
+    batch.update(orgRef, orgUpdatePayload);
+
+    const branchMap = new Map<string, { folderId: string; folderName: string; webViewLink: string }>();
+    if (data.branchFolders && data.branchFolders.length > 0) {
+      for (const bf of data.branchFolders) {
+        branchMap.set(bf.branchId, bf);
+        const branchRef = doc(db, 'branches', bf.branchId);
+        batch.update(branchRef, {
+          driveFolderId: bf.folderId,
+          driveFolderName: bf.folderName,
+          driveFolderLink: bf.webViewLink,
+        });
+      }
+    }
+
+    try {
+      await batch.commit();
+    } catch (error) {
+      console.error('Error saving Drive connection metadata:', error);
+      handleFirestoreError(error, OperationType.UPDATE, `organizations/${currentOrg.id}`);
+    }
+
+    setCurrentOrg((prev) =>
+      prev
+        ? {
+            ...prev,
+            driveConnected: true,
+            driveFolderId: data.orgFolderId,
+            driveFolderName: data.orgFolderName,
+            driveFolderLink: data.orgFolderLink,
+            driveAccountEmail: data.driveAccountEmail,
+            driveAccountName: data.driveAccountName,
+            driveGoogleSub: data.driveGoogleSub,
+            driveLinkedAt: nowIso,
+            driveMonthFolderIds: data.monthFolderMap ?? prev.driveMonthFolderIds,
+            updatedAt: nowIso,
+          }
+        : prev
+    );
+
+    if (branchMap.size > 0) {
+      setBranches((prev) =>
+        prev.map((b) => {
+          const bf = branchMap.get(b.id);
+          return bf
+            ? {
+                ...b,
+                driveFolderId: bf.folderId,
+                driveFolderName: bf.folderName,
+                driveFolderLink: bf.webViewLink,
+              }
+            : b;
+        })
+      );
+      setCurrentBranch((prev) => {
+        if (!prev) return prev;
+        const bf = branchMap.get(prev.id);
+        return bf
+          ? {
+              ...prev,
+              driveFolderId: bf.folderId,
+              driveFolderName: bf.folderName,
+              driveFolderLink: bf.webViewLink,
+            }
+          : prev;
+      });
+    }
+  };
+
+  /**
+   * Disconnects Google Drive integration metadata in Firestore without deleting
+   * any files in Google Drive or any operational records in Firestore.
+   */
+  const disconnectDriveConnection = async () => {
+    if (!currentUser || !currentOrg || !userProfile) {
+      throw new Error('يجب تسجيل الدخول بحساب مالك المؤسسة لفصل الربط.');
+    }
+    if (
+      userProfile.role !== 'manager' ||
+      !userProfile.isActive ||
+      currentUser.uid !== currentOrg.ownerId
+    ) {
+      throw new Error('فصل ربط Google Drive مقتصر حصراً على مالك المؤسسة المعتمد.');
+    }
+
+    clearDriveSession();
+
+    const nowIso = new Date().toISOString();
+    const orgRef = doc(db, 'organizations', currentOrg.id);
+    const batch = writeBatch(db);
+
+    batch.update(orgRef, {
+      driveConnected: false,
+      driveFolderId: deleteField(),
+      driveFolderName: deleteField(),
+      driveFolderLink: deleteField(),
+      driveAccountEmail: deleteField(),
+      driveAccountName: deleteField(),
+      driveGoogleSub: deleteField(),
+      driveLinkedAt: deleteField(),
+      driveMonthFolderIds: deleteField(),
+      updatedAt: nowIso,
+    });
+
+    for (const branch of branches) {
+      if (branch.driveFolderId || branch.driveFolderName || branch.driveFolderLink) {
+        const branchRef = doc(db, 'branches', branch.id);
+        batch.update(branchRef, {
+          driveFolderId: deleteField(),
+          driveFolderName: deleteField(),
+          driveFolderLink: deleteField(),
+        });
+      }
+    }
+
+    try {
+      await batch.commit();
+    } catch (error) {
+      console.error('Error disconnecting Drive metadata:', error);
+      handleFirestoreError(error, OperationType.UPDATE, `organizations/${currentOrg.id}`);
+    }
+
+    setCurrentOrg((prev) =>
+      prev
+        ? {
+            ...prev,
+            driveConnected: false,
+            driveFolderId: undefined,
+            driveFolderName: undefined,
+            driveFolderLink: undefined,
+            driveAccountEmail: undefined,
+            driveAccountName: undefined,
+            driveGoogleSub: undefined,
+            driveLinkedAt: undefined,
+            driveMonthFolderIds: undefined,
+            updatedAt: nowIso,
+          }
+        : prev
+    );
+
+    setBranches((prev) =>
+      prev.map((b) => ({
+        ...b,
+        driveFolderId: undefined,
+        driveFolderName: undefined,
+        driveFolderLink: undefined,
+      }))
+    );
+
+    setCurrentBranch((prev) =>
+      prev
+        ? {
+            ...prev,
+            driveFolderId: undefined,
+            driveFolderName: undefined,
+            driveFolderLink: undefined,
+          }
+        : prev
+    );
+  };
+
   const logout = async () => {
     setLoading(true);
     try {
+      clearDriveSession();
       await signOut(auth);
       setUserProfile(null);
       setCurrentOrg(null);
@@ -1045,6 +1287,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         submitShiftClosing,
         reviewShiftClosing,
         adminCorrectClosing,
+        saveDriveConnection,
+        disconnectDriveConnection,
         logout,
         refreshTenantData,
         setCurrentBranch,

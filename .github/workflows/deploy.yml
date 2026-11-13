@@ -43,6 +43,8 @@ jobs:
           fi
 
       - name: Build Application for Production
+        env:
+          VITE_GOOGLE_DRIVE_CLIENT_ID: ${{ vars.VITE_GOOGLE_DRIVE_CLIENT_ID }}
         run: npm run build
 
       - name: Setup GitHub Pages
