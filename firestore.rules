@@ -51,7 +51,7 @@ service cloud.firestore {
     function isValidCurrencyAmount(val) {
       return val is number &&
         !math.isNaN(val) &&
-        !math.isInfinite(val) &&
+        val < 1.0e308 && val > -1.0e308 &&
         math.abs(val * 100 - math.round(val * 100)) < 0.001;
     }
 
