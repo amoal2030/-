@@ -384,6 +384,95 @@
         }
       },
       "required": ["id", "orgId", "actorId", "actorName", "actorRole", "action", "targetType", "targetId", "timestamp"]
+    },
+    "ClosingArchive": {
+      "title": "ClosingArchive",
+      "description": "Google Drive Excel archive status, revision proof, and SHA-256 verification index for a shift closing",
+      "type": "object",
+      "properties": {
+        "closingId": {
+          "type": "string",
+          "description": "Associated shift closing document ID"
+        },
+        "orgId": {
+          "type": "string",
+          "description": "Organization ID"
+        },
+        "branchId": {
+          "type": "string",
+          "description": "Branch ID"
+        },
+        "yearMonth": {
+          "type": "string",
+          "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+          "description": "Calendar month YYYY-MM matching closing date"
+        },
+        "archiveStatus": {
+          "type": "string",
+          "enum": ["pending_drive_sync", "archived", "failed", "stale"],
+          "description": "Current Drive Excel archival lifecycle status"
+        },
+        "driveExcelFileId": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "Verified Google Drive file ID of the archived Excel workbook"
+        },
+        "driveExcelFileName": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "Verified .xlsx file name in Google Drive"
+        },
+        "driveExcelWebViewLink": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "Direct Google Drive webViewLink to the archived Excel file"
+        },
+        "driveMonthFolderId": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "Parent YYYY-MM folder ID in Google Drive"
+        },
+        "drivePayloadHash": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "description": "SHA-256 hex digest of canonical closing financial payload"
+        },
+        "driveRevision": {
+          "type": "number",
+          "description": "Positive integer Excel archive revision (1, 2, 3...)"
+        },
+        "previousDriveExcelFileId": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "Prior Drive file ID superseded after administrative correction"
+        },
+        "sourceCorrectionAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of parent closing correctedAt associated with this revision"
+        },
+        "archivedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when Drive Excel upload and read-back verification succeeded"
+        },
+        "archivedBy": {
+          "type": "string",
+          "description": "UID of verified organization manager/owner who executed archival"
+        },
+        "archiveError": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Error summary when Drive archival fails"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last archive record update timestamp"
+        }
+      },
+      "required": ["closingId", "orgId", "branchId", "yearMonth", "archiveStatus", "updatedAt"]
     }
   },
   "firestore": {
@@ -410,6 +499,10 @@
     "/auditLogs/{logId}": {
       "schema": "AuditLog",
       "description": "Immutable administrative audit log events"
+    },
+    "/closingArchives/{closingId}": {
+      "schema": "ClosingArchive",
+      "description": "Google Drive Excel archival index keyed by closingId"
     }
   }
 }

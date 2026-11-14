@@ -24,6 +24,28 @@ export interface DriveMonthFolderRef {
 
 export type DriveHealthStatus = 'untested' | 'verified' | 'failed' | 'disconnected';
 
+export type ClosingArchiveStatus = 'pending_drive_sync' | 'archived' | 'failed' | 'stale';
+
+export interface ClosingArchiveRecord {
+  closingId: string;
+  orgId: string;
+  branchId: string;
+  yearMonth: string; // YYYY-MM
+  archiveStatus: ClosingArchiveStatus;
+  driveExcelFileId?: string;
+  driveExcelFileName?: string;
+  driveExcelWebViewLink?: string;
+  driveMonthFolderId?: string;
+  drivePayloadHash?: string;
+  driveRevision?: number;
+  previousDriveExcelFileId?: string;
+  sourceCorrectionAt?: string;
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveError?: string;
+  updatedAt: string;
+}
+
 export interface Organization {
   id: string;
   name: string;

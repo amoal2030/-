@@ -1,0 +1,76 @@
+name: Firestore Rules Emulator Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  firestore-rules-emulator-tests:
+    name: Run 23 Firestore Rules Emulator Tests & Build Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Java (Temurin 21 for Firebase Emulator)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Verify Java Version
+        run: java -version
+
+      - name: Install Dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "package-lock.json found. Running npm ci..."
+            npm ci || npm install
+          else
+            echo "package-lock.json not found. Running npm install..."
+            npm install
+          fi
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Verify Local firestore.rules Target
+        run: |
+          test -f firestore.rules
+          test -f firebase.json
+          echo "Loaded local firestore.rules stats:"
+          wc -l firestore.rules
+          sha256sum firestore.rules
+
+      - name: TypeScript Type Check
+        run: npx tsc --noEmit
+
+      - name: Verify Vite Production Build (No Deploy)
+        env:
+          VITE_GOOGLE_DRIVE_CLIENT_ID: ${{ vars.VITE_GOOGLE_DRIVE_CLIENT_ID || secrets.VITE_GOOGLE_DRIVE_CLIENT_ID }}
+        run: npm run build
+
+      - name: Run All 23 closingArchives Firestore Rules Tests in Isolated Emulator
+        env:
+          GCLOUD_PROJECT: aleqfal-closing-archives-tests
+        run: |
+          firebase emulators:exec \
+            --only firestore \
+            --project aleqfal-closing-archives-tests \
+            "npx tsx src/tests/closingArchivesEmulatorRules.test.ts"

@@ -48,6 +48,25 @@ service cloud.firestore {
         getUserData().role == 'manager';
     }
 
+    function isValidCurrencyAmount(val) {
+      return val is number &&
+        !math.isNaN(val) &&
+        !math.isInfinite(val) &&
+        math.abs(val * 100 - math.round(val * 100)) < 0.001;
+    }
+
+    function hasValidHalalaShiftAccounting(data) {
+      return isValidCurrencyAmount(data.cashSales) && data.cashSales >= 0 &&
+        isValidCurrencyAmount(data.cardSales) && data.cardSales >= 0 &&
+        isValidCurrencyAmount(data.expenses) && data.expenses >= 0 &&
+        isValidCurrencyAmount(data.totalSales) && data.totalSales >= 0 &&
+        isValidCurrencyAmount(data.remainingInBox) &&
+        isValidCurrencyAmount(data.netPeriod) &&
+        math.round(data.totalSales * 100) == math.round(data.cashSales * 100) + math.round(data.cardSales * 100) &&
+        math.round(data.remainingInBox * 100) == math.round(data.cashSales * 100) - math.round(data.expenses * 100) &&
+        math.round(data.netPeriod * 100) == (math.round(data.cashSales * 100) + math.round(data.cardSales * 100)) - math.round(data.expenses * 100);
+    }
+
     function isValidYearMonth(ym) {
       return ym is string && ym.matches('^\\d{4}-(0[1-9]|1[0-2])$');
     }
@@ -593,13 +612,8 @@ service cloud.firestore {
           incoming().previousValues.cardSales == existing().cardSales &&
           incoming().previousValues.expenses == existing().expenses &&
           incoming().previousValues.totalSales == existing().totalSales &&
-          // Strict Mathematical Accounting verification in Halalas:
-          incoming().cashSales is number && incoming().cashSales >= 0 &&
-          incoming().cardSales is number && incoming().cardSales >= 0 &&
-          incoming().expenses is number && incoming().expenses >= 0 &&
-          incoming().totalSales == incoming().cashSales + incoming().cardSales &&
-          incoming().remainingInBox == incoming().cashSales - incoming().expenses &&
-          incoming().netPeriod == (incoming().cashSales + incoming().cardSales) - incoming().expenses
+          // Strict Mathematical Accounting verification in Integer Halalas (avoids 0.1 + 0.2 float drift):
+          hasValidHalalaShiftAccounting(incoming())
         )
       );
 

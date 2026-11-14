@@ -43,6 +43,7 @@ import {
   AuditLog,
   ShiftClosing,
   ClosingStatus,
+  ClosingArchiveRecord,
   DriveMonthFolderRef,
   DriveHealthStatus,
 } from '../types';
@@ -51,11 +52,21 @@ import {
   generateDeterministicClosingId,
 } from '../utils/accounting';
 import {
+  assertDriveSessionMatchesAccount,
   clearDriveSession,
+  downloadOriginalClosingExcelFromDrive,
   evaluateOrgDriveReadiness,
+  getActiveDriveSession,
   OrgDriveReadinessResult,
   DRIVE_NOT_READY_MESSAGE,
+  requestDriveAuthorization,
+  uploadAndVerifyClosingExcelToDrive,
 } from '../services/driveService';
+import {
+  assertValidIsoCalendarDate,
+  downloadXlsxBytes,
+  generateClosingExcelWorkbook,
+} from '../services/excelReportService';
 
 interface AuthContextType {
   currentUser: FirebaseUser | null;
@@ -65,6 +76,7 @@ interface AuthContextType {
   currentBranch: Branch | null;
   employees: UserProfile[];
   closings: ShiftClosing[];
+  closingArchives: ClosingArchiveRecord[];
   auditLogs: AuditLog[];
   loading: boolean;
   needsOnboarding: boolean;
@@ -132,6 +144,17 @@ interface AuthContextType {
   }) => Promise<void>;
   recordDriveHealthFailure: (errorMessage: string) => Promise<void>;
   disconnectDriveConnection: () => Promise<void>;
+  archiveClosingToDrive: (
+    closingId: string,
+    options?: { interactiveAuthIfNeeded?: boolean }
+  ) => Promise<ClosingArchiveRecord>;
+  archivePendingClosingsToDrive: (closingIds: string[]) => Promise<{
+    succeeded: string[];
+    failed: Array<{ closingId: string; error: string }>;
+  }>;
+  downloadArchivedExcelFromDrive: (
+    closingId: string
+  ) => Promise<{ fileName: string; revision: number }>;
   driveReadiness: OrgDriveReadinessResult;
   logout: () => Promise<void>;
   refreshTenantData: () => Promise<void>;
@@ -150,6 +173,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
   const [employees, setEmployees] = useState<UserProfile[]>([]);
   const [closings, setClosings] = useState<ShiftClosing[]>([]);
+  const [closingArchives, setClosingArchives] = useState<ClosingArchiveRecord[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
@@ -185,6 +209,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setCurrentBranch(null);
         setEmployees([]);
         setClosings([]);
+        setClosingArchives([]);
         setAuditLogs([]);
         setNeedsOnboarding(false);
         setLoading(false);
@@ -320,6 +345,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       );
     }
 
+    // 5. Closing Archives snapshot listener (scoped cleanly by role & branch for Employee)
+    let unsubArchives = () => {};
+    if (userProfile.role === 'manager') {
+      const archivesQuery = query(
+        collection(db, 'closingArchives'),
+        where('orgId', '==', currentOrg.id)
+      );
+      unsubArchives = onSnapshot(
+        archivesQuery,
+        (snapshot) => {
+          const loaded: ClosingArchiveRecord[] = [];
+          snapshot.forEach((d) => loaded.push(d.data() as ClosingArchiveRecord));
+          setClosingArchives(loaded);
+        },
+        (error) => {
+          console.warn('Closing archives listener notice:', error?.message);
+        }
+      );
+    } else if (userProfile.role === 'employee' && userProfile.branchId) {
+      const empArchivesQuery = query(
+        collection(db, 'closingArchives'),
+        where('orgId', '==', currentOrg.id),
+        where('branchId', '==', userProfile.branchId)
+      );
+      unsubArchives = onSnapshot(
+        empArchivesQuery,
+        (snapshot) => {
+          const loaded: ClosingArchiveRecord[] = [];
+          snapshot.forEach((d) => loaded.push(d.data() as ClosingArchiveRecord));
+          setClosingArchives(loaded);
+        },
+        (error) => {
+          console.warn('Employee closing archives listener notice:', error?.message);
+        }
+      );
+    }
+
     return () => {
       unsubOrg();
       unsubBranches();
@@ -327,8 +389,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       unsubSelf();
       unsubUsers();
       unsubLogs();
+      unsubArchives();
     };
-  }, [currentOrg?.id, currentUser?.uid, userProfile?.role, userProfile?.isActive, userProfile?.orgId]);
+  }, [currentOrg?.id, currentUser?.uid, userProfile?.role, userProfile?.isActive, userProfile?.orgId, userProfile?.branchId]);
 
   const loadUserData = async (fbUser: FirebaseUser) => {
     setLoading(true);
@@ -805,6 +868,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       );
     }
 
+    const { yearMonth } = assertValidIsoCalendarDate(data.date);
+
     const calc = calculateShiftTotals(data.cashSales, data.cardSales, data.expenses);
     if (!calc.isValid) {
       throw new Error('يجب أن تكون جميع المبالغ المالية أرقاماً موجبة صحيحة.');
@@ -817,6 +882,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       data.period
     );
     const closingDocRef = doc(db, 'closings', closingId);
+    const archiveDocRef = doc(db, 'closingArchives', closingId);
     const logId = `log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const auditLogRef = doc(db, 'auditLogs', logId);
     const nowIso = new Date().toISOString();
@@ -912,10 +978,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       timestamp: nowIso,
     };
 
-    // Atomic batched write: creates closing and audit log together
+    let existingArchive: ClosingArchiveRecord | null =
+      closingArchives.find((a) => a.closingId === closingId) || null;
+    if (!existingArchive) {
+      try {
+        const archiveSnap = await getDoc(archiveDocRef);
+        if (archiveSnap.exists()) {
+          existingArchive = archiveSnap.data() as ClosingArchiveRecord;
+        }
+      } catch (archCheckErr) {
+        console.warn('Notice checking existing closing archive:', archCheckErr);
+      }
+    }
+
+    // Atomic batched write: creates closing, audit log, and pending_drive_sync archive index together
     const batch = writeBatch(db);
     batch.set(closingDocRef, newClosing);
     batch.set(auditLogRef, auditEntry);
+    if (!existingArchive) {
+      batch.set(archiveDocRef, {
+        closingId,
+        orgId: currentOrg.id,
+        branchId: data.branchId,
+        yearMonth,
+        archiveStatus: 'pending_drive_sync',
+        updatedAt: nowIso,
+      });
+    } else if (existingArchive.archiveStatus === 'pending_drive_sync') {
+      batch.update(archiveDocRef, {
+        archiveStatus: 'pending_drive_sync',
+        updatedAt: nowIso,
+      });
+    }
 
     try {
       await batch.commit();
@@ -949,6 +1043,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const existing = closingSnap.data() as ShiftClosing;
     if (existing.status === 'approved') {
       throw new Error('الإقفال معتمد بالفعل ومقفل ضد التعديلات المباشرة.');
+    }
+
+    const { yearMonth } = assertValidIsoCalendarDate(existing.date);
+    const archiveDocRef = doc(db, 'closingArchives', closingId);
+    let existingArchive: ClosingArchiveRecord | null =
+      closingArchives.find((a) => a.closingId === closingId) || null;
+    if (!existingArchive) {
+      try {
+        const archiveSnap = await getDoc(archiveDocRef);
+        if (archiveSnap.exists()) {
+          existingArchive = archiveSnap.data() as ClosingArchiveRecord;
+        }
+      } catch (archErr) {
+        console.warn('Notice checking archive doc during review:', archErr);
+      }
     }
 
     const nowIso = new Date().toISOString();
@@ -987,6 +1096,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         timestamp: nowIso,
       });
 
+      if (action === 'approve') {
+        if (!existingArchive) {
+          batch.set(archiveDocRef, {
+            closingId,
+            orgId: currentOrg.id,
+            branchId: existing.branchId,
+            yearMonth,
+            archiveStatus: 'pending_drive_sync',
+            updatedAt: nowIso,
+          });
+        } else if (existingArchive.archiveStatus === 'pending_drive_sync') {
+          batch.update(archiveDocRef, {
+            archiveStatus: 'pending_drive_sync',
+            updatedAt: nowIso,
+          });
+        }
+      }
+
       await batch.commit();
     } catch (error) {
       console.error('Error reviewing closing:', error);
@@ -1024,17 +1151,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const closingDocRef = doc(db, 'closings', data.closingId);
+    const archiveDocRef = doc(db, 'closingArchives', data.closingId);
     const auditLogId = `log_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const auditLogDocRef = doc(db, 'auditLogs', auditLogId);
-    const nowIso = new Date().toISOString();
+    let nowIso = new Date().toISOString();
 
     try {
       await runTransaction(db, async (transaction) => {
-        // 1. Read existing document inside transaction
+        // 1. Read existing closing AND closingArchive inside transaction before any writes
         const closingSnap = await transaction.get(closingDocRef);
         if (!closingSnap.exists()) {
           throw new Error('سجل الإقفال غير موجود.');
         }
+        const archiveSnap = await transaction.get(archiveDocRef);
 
         const existing = closingSnap.data() as ShiftClosing;
 
@@ -1045,6 +1174,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (existing.status !== 'approved') {
           throw new Error('التصحيح الإداري مخصص فقط للإقفالات المعتمدة.');
+        }
+
+        assertValidIsoCalendarDate(existing.date);
+
+        if (existing.correctedAt === nowIso) {
+          nowIso = new Date(Date.now() + 1).toISOString();
         }
 
         // 3. Genuine previous values snapshot from the server document
@@ -1075,7 +1210,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         transaction.update(closingDocRef, updatedPayload);
 
-        // 5. Create atomic audit log in the exact same transaction
+        // 5. Mark existing Drive archive as stale atomically if it was already archived / stale / failed-with-proof
+        if (archiveSnap.exists()) {
+          const prevArchive = archiveSnap.data() as ClosingArchiveRecord;
+          if (
+            prevArchive.archiveStatus === 'archived' ||
+            prevArchive.archiveStatus === 'stale' ||
+            (prevArchive.archiveStatus === 'failed' && Boolean(prevArchive.driveExcelFileId))
+          ) {
+            transaction.update(archiveDocRef, {
+              archiveStatus: 'stale',
+              archiveError: deleteField(),
+              sourceCorrectionAt: nowIso,
+              updatedAt: nowIso,
+            });
+          }
+        }
+
+        // 6. Create atomic audit log in the exact same transaction
         const auditLogData: AuditLog = {
           id: auditLogId,
           orgId: currentOrg.id,
@@ -1385,6 +1537,364 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
   };
 
+  /**
+   * Manager-only real Excel (.xlsx) archival to Google Drive with deduplication,
+   * version chain preservation, and mandatory read-back verification prior to marking 'archived'.
+   */
+  const archiveClosingToDrive = async (
+    closingId: string,
+    options?: { interactiveAuthIfNeeded?: boolean }
+  ): Promise<ClosingArchiveRecord> => {
+    const interactiveAuthIfNeeded = options?.interactiveAuthIfNeeded ?? true;
+
+    if (!currentUser || !currentOrg || !userProfile) {
+      throw new Error('يجب تسجيل الدخول بصفة مدير معتمد لأرشفة الإقفالات.');
+    }
+    if (userProfile.role !== 'manager' || !userProfile.isActive) {
+      throw new Error('أرشفة الإقفالات ورفع ملفات Excel إلى Google Drive مقتصرة حصراً على المدير.');
+    }
+    if (currentUser.uid !== currentOrg.ownerId) {
+      throw new Error('صلاحية الرفع إلى Google Drive مقتصرة على مالك المؤسسة المرتبط حسابه.');
+    }
+
+    const closingDocRef = doc(db, 'closings', closingId);
+    const closingSnap = await getDocFromServer(closingDocRef).catch(() => getDoc(closingDocRef));
+    if (!closingSnap.exists()) {
+      throw new Error('سجل الإقفال غير موجود.');
+    }
+
+    const closing = closingSnap.data() as ShiftClosing;
+    if (closing.orgId !== currentOrg.id) {
+      throw new Error('لا يمكن أرشفة إقفال تابع لمؤسسة أخرى.');
+    }
+    if (closing.status !== 'approved') {
+      throw new Error('لا يمكن أرشفة الإقفال في Google Drive قبل اعتماده رسمياً.');
+    }
+
+    const { yearMonth } = assertValidIsoCalendarDate(closing.date);
+
+    let branch = branches.find((b) => b.id === closing.branchId) || null;
+    if (!branch) {
+      const brSnap = await getDoc(doc(db, 'branches', closing.branchId));
+      if (brSnap.exists()) {
+        branch = brSnap.data() as Branch;
+      }
+    }
+    if (!branch) {
+      throw new Error('بيانات الفرع المرتبط بالإقفال غير متوفرة.');
+    }
+
+    const readiness = evaluateOrgDriveReadiness(currentOrg, branch);
+    if (!readiness.isReady) {
+      throw new Error(readiness.detail || readiness.message);
+    }
+
+    const archiveDocRef = doc(db, 'closingArchives', closingId);
+    let prevArchive: ClosingArchiveRecord | null = null;
+    try {
+      const archSnap = await getDocFromServer(archiveDocRef).catch(() => getDoc(archiveDocRef));
+      if (archSnap.exists()) {
+        prevArchive = archSnap.data() as ClosingArchiveRecord;
+      }
+    } catch {
+      prevArchive = closingArchives.find((a) => a.closingId === closingId) || null;
+    }
+
+    // Already archived cleanly on current version -> safe idempotent return
+    if (
+      prevArchive &&
+      prevArchive.archiveStatus === 'archived' &&
+      (!closing.correctedAt || prevArchive.sourceCorrectionAt === closing.correctedAt)
+    ) {
+      return prevArchive;
+    }
+
+    const isReArchive = Boolean(prevArchive?.driveExcelFileId);
+    const targetRevision = isReArchive ? (prevArchive!.driveRevision || 1) + 1 : 1;
+    const forbiddenPreviousFileId = isReArchive ? prevArchive!.driveExcelFileId : undefined;
+
+    if (isReArchive && !closing.correctedAt) {
+      throw new Error(
+        'تعذر إعادة الأرشفة لعدم وجود طابع تصحيح إداري موثق (correctedAt) على الإقفال المعتمد.'
+      );
+    }
+
+    // Ensure owner Google identity & RAM-only OAuth access token
+    const googleProviderData = currentUser.providerData.find((p) => p.providerId === 'google.com');
+    const googleUid = googleProviderData?.uid;
+    const ownerEmail = googleProviderData?.email || currentUser.email || '';
+    if (!googleUid || !ownerEmail) {
+      throw new Error('حساب المالك الحالي غير مرتبط بمزود Google لتفويض Google Drive.');
+    }
+
+    let session = getActiveDriveSession();
+    if (session) {
+      try {
+        session = assertDriveSessionMatchesAccount(session, {
+          googleUid,
+          email: ownerEmail,
+          linkedSub: currentOrg.driveGoogleSub,
+          linkedEmail: currentOrg.driveAccountEmail,
+        });
+      } catch {
+        session = null;
+      }
+    }
+
+    if (!session) {
+      if (!interactiveAuthIfNeeded) {
+        throw new Error(
+          'تم اعتماد الإقفال بنجاح. اضغط «أرشفة في Google Drive» لتجديد تفويض المتصفح المؤقت ورفع ملف Excel.'
+        );
+      }
+      session = await requestDriveAuthorization(googleUid, ownerEmail, {
+        linkedSub: currentOrg.driveGoogleSub,
+        linkedEmail: currentOrg.driveAccountEmail,
+      });
+    }
+
+    try {
+      // 1. Generate formatted RTL Excel workbook using ONLY real fields
+      const excelPayload = await generateClosingExcelWorkbook({
+        closing,
+        org: currentOrg,
+        branch,
+        revision: targetRevision,
+      });
+
+      // 2. Upload to Drive ({org}/{branch}/{YYYY-MM}) and strictly verify metadata + binary + exceljs content
+      const uploadResult = await uploadAndVerifyClosingExcelToDrive({
+        token: session.accessToken,
+        org: currentOrg,
+        branch,
+        closing,
+        revision: targetRevision,
+        excelPayload,
+        forbiddenPreviousFileId,
+      });
+
+      const nowIso = new Date().toISOString();
+
+      // 3. Cache verified month folder ref in Organization metadata if new/updated
+      const monthKey = `${branch.id}_${yearMonth}`;
+      const existingMonthRef = currentOrg.driveMonthFolderIds?.[monthKey];
+      if (!existingMonthRef || existingMonthRef.folderId !== uploadResult.monthFolder.folderId) {
+        try {
+          await updateDoc(doc(db, 'organizations', currentOrg.id), {
+            [`driveMonthFolderIds.${monthKey}`]: uploadResult.monthFolder,
+            updatedAt: nowIso,
+          });
+        } catch (folderSyncErr) {
+          console.warn('Notice updating cached month folder ref:', folderSyncErr);
+        }
+      }
+
+      // 4. Write 'archived' state to Firestore closingArchives ONLY after verified Drive read-back
+      const archivedFields: Record<string, any> = {
+        closingId: closing.id,
+        orgId: currentOrg.id,
+        branchId: closing.branchId,
+        yearMonth,
+        archiveStatus: 'archived',
+        driveExcelFileId: uploadResult.fileId,
+        driveExcelFileName: uploadResult.fileName,
+        driveExcelWebViewLink: uploadResult.webViewLink,
+        driveMonthFolderId: uploadResult.monthFolder.folderId,
+        drivePayloadHash: uploadResult.payloadHash,
+        driveRevision: targetRevision,
+        archivedAt: nowIso,
+        archivedBy: currentUser.uid,
+        updatedAt: nowIso,
+      };
+
+      if (isReArchive && prevArchive?.driveExcelFileId) {
+        archivedFields.previousDriveExcelFileId = prevArchive.driveExcelFileId;
+      }
+      if (closing.correctedAt) {
+        archivedFields.sourceCorrectionAt = closing.correctedAt;
+      }
+
+      if (!prevArchive) {
+        await setDoc(archiveDocRef, archivedFields);
+      } else {
+        await updateDoc(archiveDocRef, {
+          archiveStatus: 'archived',
+          driveExcelFileId: uploadResult.fileId,
+          driveExcelFileName: uploadResult.fileName,
+          driveExcelWebViewLink: uploadResult.webViewLink,
+          driveMonthFolderId: uploadResult.monthFolder.folderId,
+          drivePayloadHash: uploadResult.payloadHash,
+          driveRevision: targetRevision,
+          archivedAt: nowIso,
+          archivedBy: currentUser.uid,
+          archiveError: deleteField(),
+          updatedAt: nowIso,
+          ...(isReArchive && prevArchive.driveExcelFileId
+            ? { previousDriveExcelFileId: prevArchive.driveExcelFileId }
+            : {}),
+          ...(closing.correctedAt ? { sourceCorrectionAt: closing.correctedAt } : {}),
+        });
+      }
+
+      const savedRecord: ClosingArchiveRecord = {
+        closingId: closing.id,
+        orgId: currentOrg.id,
+        branchId: closing.branchId,
+        yearMonth,
+        archiveStatus: 'archived',
+        driveExcelFileId: uploadResult.fileId,
+        driveExcelFileName: uploadResult.fileName,
+        driveExcelWebViewLink: uploadResult.webViewLink,
+        driveMonthFolderId: uploadResult.monthFolder.folderId,
+        drivePayloadHash: uploadResult.payloadHash,
+        driveRevision: targetRevision,
+        previousDriveExcelFileId:
+          isReArchive && prevArchive?.driveExcelFileId ? prevArchive.driveExcelFileId : undefined,
+        sourceCorrectionAt: closing.correctedAt || undefined,
+        archivedAt: nowIso,
+        archivedBy: currentUser.uid,
+        updatedAt: nowIso,
+      };
+
+      setClosingArchives((prev) => {
+        const filteredList = prev.filter((item) => item.closingId !== closing.id);
+        return [savedRecord, ...filteredList];
+      });
+
+      return savedRecord;
+    } catch (err: any) {
+      const errTime = new Date().toISOString();
+      const rawMsg = String(err?.message || err || 'فشل أرشفة ملف Excel في Google Drive').trim();
+      const safeError = (rawMsg.length >= 5 ? rawMsg : `خطأ أرشفة: ${rawMsg}`).slice(0, 1000);
+
+      try {
+        if (!prevArchive) {
+          await setDoc(archiveDocRef, {
+            closingId: closing.id,
+            orgId: currentOrg.id,
+            branchId: closing.branchId,
+            yearMonth,
+            archiveStatus: 'failed',
+            archiveError: safeError,
+            updatedAt: errTime,
+          });
+        } else if (prevArchive.archiveStatus !== 'archived') {
+          await updateDoc(archiveDocRef, {
+            archiveStatus: 'failed',
+            archiveError: safeError,
+            updatedAt: errTime,
+          });
+        }
+      } catch (persistErr) {
+        console.warn('Notice recording archive failure in closingArchives:', persistErr);
+      }
+
+      throw err;
+    }
+  };
+
+  /**
+   * Batch archives multiple pending/stale/failed approved closings sequentially
+   * using the owner's single RAM Drive session.
+   */
+  const archivePendingClosingsToDrive = async (closingIds: string[]) => {
+    const succeeded: string[] = [];
+    const failed: Array<{ closingId: string; error: string }> = [];
+
+    for (const id of closingIds) {
+      try {
+        await archiveClosingToDrive(id, { interactiveAuthIfNeeded: true });
+        succeeded.push(id);
+      } catch (err: any) {
+        failed.push({
+          closingId: id,
+          error: err?.message || 'فشل رفع ملف Excel للإقفال',
+        });
+      }
+    }
+
+    return { succeeded, failed };
+  };
+
+  /**
+   * Downloads and verifies the original archived .xlsx file directly from Google Drive
+   * (`files.get?alt=media`) using the stored `driveExcelFileId`, without regenerating locally from Firestore.
+   */
+  const downloadArchivedExcelFromDrive = async (
+    closingId: string
+  ): Promise<{ fileName: string; revision: number }> => {
+    if (!currentUser || !currentOrg || !userProfile) {
+      throw new Error('يجب تسجيل الدخول بصفة مدير معتمد لتنزيل الملف الأصلي من Google Drive.');
+    }
+    if (userProfile.role !== 'manager' || !userProfile.isActive) {
+      throw new Error('تنزيل ملفات الإقفال الأصلية من Google Drive مقتصر حصراً على المدير.');
+    }
+    if (currentUser.uid !== currentOrg.ownerId) {
+      throw new Error('صلاحية الوصول إلى ملفات Google Drive وتنزيلها مقتصرة على مالك المؤسسة المرتبط حسابه.');
+    }
+
+    const closingDocRef = doc(db, 'closings', closingId);
+    const closingSnap = await getDocFromServer(closingDocRef).catch(() => getDoc(closingDocRef));
+    if (!closingSnap.exists()) {
+      throw new Error('سجل الإقفال غير موجود.');
+    }
+    const closing = closingSnap.data() as ShiftClosing;
+    if (closing.orgId !== currentOrg.id) {
+      throw new Error('لا يمكن تنزيل ملف أرشيف تابع لمؤسسة أخرى.');
+    }
+
+    const archiveDocRef = doc(db, 'closingArchives', closingId);
+    const archiveSnap = await getDocFromServer(archiveDocRef).catch(() => getDoc(archiveDocRef));
+    if (!archiveSnap.exists()) {
+      throw new Error('لا يوجد سجل أرشفة Google Drive لهذا الإقفال حتى الآن.');
+    }
+    const archiveRecord = archiveSnap.data() as ClosingArchiveRecord;
+    if (!archiveRecord.driveExcelFileId) {
+      throw new Error('لم يتم رفع ملف Excel لهذا الإقفال إلى Google Drive بعد.');
+    }
+
+    const googleProviderData = currentUser.providerData.find((p) => p.providerId === 'google.com');
+    const googleUid = googleProviderData?.uid;
+    const ownerEmail = googleProviderData?.email || currentUser.email || '';
+    if (!googleUid || !ownerEmail) {
+      throw new Error('حساب المالك الحالي غير مرتبط بمزود Google لتفويض Google Drive.');
+    }
+
+    let session = getActiveDriveSession();
+    if (session) {
+      try {
+        session = assertDriveSessionMatchesAccount(session, {
+          googleUid,
+          email: ownerEmail,
+          linkedSub: currentOrg.driveGoogleSub,
+          linkedEmail: currentOrg.driveAccountEmail,
+        });
+      } catch {
+        session = null;
+      }
+    }
+
+    if (!session) {
+      session = await requestDriveAuthorization(googleUid, ownerEmail, {
+        linkedSub: currentOrg.driveGoogleSub,
+        linkedEmail: currentOrg.driveAccountEmail,
+      });
+    }
+
+    const downloaded = await downloadOriginalClosingExcelFromDrive({
+      token: session.accessToken,
+      org: currentOrg,
+      closing,
+      archiveRecord,
+    });
+
+    downloadXlsxBytes(downloaded.bytes, downloaded.fileName);
+    return {
+      fileName: downloaded.fileName,
+      revision: downloaded.revision,
+    };
+  };
+
   const logout = async () => {
     setLoading(true);
     try {
@@ -1396,6 +1906,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCurrentBranch(null);
       setEmployees([]);
       setClosings([]);
+      setClosingArchives([]);
       setAuditLogs([]);
       setNeedsOnboarding(false);
     } catch (error) {
@@ -1423,6 +1934,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         currentBranch,
         employees,
         closings,
+        closingArchives,
         auditLogs,
         loading,
         needsOnboarding,
@@ -1440,6 +1952,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         saveDriveConnection,
         recordDriveHealthFailure,
         disconnectDriveConnection,
+        archiveClosingToDrive,
+        archivePendingClosingsToDrive,
+        downloadArchivedExcelFromDrive,
         driveReadiness,
         logout,
         refreshTenantData,

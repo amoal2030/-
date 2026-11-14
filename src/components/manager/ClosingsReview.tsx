@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { ShiftClosing } from '../../types';
+import { ShiftClosing, ClosingArchiveRecord } from '../../types';
 import { formatCurrency, formatDate, calculateShiftTotals } from '../../utils/accounting';
 import {
   FileSpreadsheet,
@@ -17,11 +17,27 @@ import {
   Sparkles,
   DollarSign,
   Edit3,
-  History
+  History,
+  CloudUpload,
+  ExternalLink,
+  Download,
+  RefreshCw,
+  ShieldCheck
 } from 'lucide-react';
 
 export const ClosingsReview: React.FC = () => {
-  const { closings, branches, currentOrg, reviewShiftClosing, adminCorrectClosing } = useAuth();
+  const {
+    currentUser,
+    closings,
+    closingArchives,
+    branches,
+    currentOrg,
+    reviewShiftClosing,
+    adminCorrectClosing,
+    archiveClosingToDrive,
+    archivePendingClosingsToDrive,
+    downloadArchivedExcelFromDrive,
+  } = useAuth();
   const { language, t } = useLanguage();
 
   // Filters
@@ -44,7 +60,123 @@ export const ClosingsReview: React.FC = () => {
   const [corrExpenses, setCorrExpenses] = useState('');
   const [corrReason, setCorrReason] = useState('');
 
+  // Drive Archival states
+  const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
+  const [downloadBusyId, setDownloadBusyId] = useState<string | null>(null);
+  const [batchArchiveLoading, setBatchArchiveLoading] = useState(false);
+  const [archiveFeedback, setArchiveFeedback] = useState<{
+    type: 'success' | 'warning' | 'error';
+    message: string;
+  } | null>(null);
+
   const corrCalc = calculateShiftTotals(corrCash, corrCard, corrExpenses);
+
+  const archiveMap = new Map<string, ClosingArchiveRecord>(
+    closingArchives.map((a) => [a.closingId, a])
+  );
+
+  const pendingSyncClosings = closings.filter((c) => {
+    if (c.status !== 'approved') return false;
+    const arch = archiveMap.get(c.id);
+    return !arch || arch.archiveStatus !== 'archived';
+  });
+
+  const getArchiveBadge = (closing: ShiftClosing) => {
+    if (closing.status !== 'approved') {
+      return {
+        label: 'غير مطلوب بعد',
+        class: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
+      };
+    }
+    const arch = archiveMap.get(closing.id);
+    if (!arch || arch.archiveStatus === 'pending_drive_sync') {
+      return {
+        label: 'بانتظار الأرشفة',
+        class: 'bg-amber-500/15 text-amber-500 border-amber-500/30',
+      };
+    }
+    if (arch.archiveStatus === 'archived') {
+      return {
+        label: `مؤرشف v${arch.driveRevision || 1}`,
+        class: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30 font-bold',
+      };
+    }
+    if (arch.archiveStatus === 'stale') {
+      return {
+        label: 'يحتاج إعادة أرشفة',
+        class: 'bg-amber-500/20 text-amber-400 border-amber-500/40 font-bold',
+      };
+    }
+    return {
+      label: 'فشل الأرشفة',
+      class: 'bg-rose-500/15 text-rose-400 border-rose-500/30 font-bold',
+    };
+  };
+
+  const handleArchiveSingle = async (closingId: string) => {
+    setArchiveBusyId(closingId);
+    setActionError(null);
+    setArchiveFeedback(null);
+    try {
+      const saved = await archiveClosingToDrive(closingId, { interactiveAuthIfNeeded: true });
+      setArchiveFeedback({
+        type: 'success',
+        message: `تم إنشاء ورفع والتحقق من ملف Excel (${saved.driveExcelFileName}) — الإصدار v${saved.driveRevision}.`,
+      });
+    } catch (err: any) {
+      const msg = err?.message || 'فشل أرشفة ملف Excel في Google Drive.';
+      setActionError(msg);
+      setArchiveFeedback({ type: 'error', message: msg });
+    } finally {
+      setArchiveBusyId(null);
+    }
+  };
+
+  const handleBatchArchive = async () => {
+    if (pendingSyncClosings.length === 0) return;
+    setBatchArchiveLoading(true);
+    setArchiveFeedback(null);
+    try {
+      const result = await archivePendingClosingsToDrive(pendingSyncClosings.map((c) => c.id));
+      if (result.failed.length === 0) {
+        setArchiveFeedback({
+          type: 'success',
+          message: `تمت أرشفة والتحقق من (${result.succeeded.length}) ملف Excel بنجاح في Google Drive.`,
+        });
+      } else {
+        setArchiveFeedback({
+          type: 'warning',
+          message: `تمت أرشفة (${result.succeeded.length}) ملفات، وفشل (${result.failed.length}): ${result.failed[0].error}`,
+        });
+      }
+    } catch (err: any) {
+      setArchiveFeedback({
+        type: 'error',
+        message: err?.message || 'تعذر تنفيذ المزامنة الجماعية مع Google Drive.',
+      });
+    } finally {
+      setBatchArchiveLoading(false);
+    }
+  };
+
+  const handleDownloadOriginalFromDrive = async (closingId: string) => {
+    setDownloadBusyId(closingId);
+    setActionError(null);
+    setArchiveFeedback(null);
+    try {
+      const downloaded = await downloadArchivedExcelFromDrive(closingId);
+      setArchiveFeedback({
+        type: 'success',
+        message: `تم تنزيل والتحقق من ملف Excel الأصلي المخزن في Google Drive (${downloaded.fileName} — v${downloaded.revision}).`,
+      });
+    } catch (err: any) {
+      const msg = err?.message || 'فشل تنزيل ملف Excel الأصلي من Google Drive.';
+      setActionError(msg);
+      setArchiveFeedback({ type: 'error', message: msg });
+    } finally {
+      setDownloadBusyId(null);
+    }
+  };
 
   const filteredClosings = closings.filter((c) => {
     if (selectedBranchId !== 'all' && c.branchId !== selectedBranchId) return false;
@@ -58,8 +190,25 @@ export const ClosingsReview: React.FC = () => {
     if (!activeClosing) return;
     setReviewLoading(true);
     setActionError(null);
+    setArchiveFeedback(null);
+    const targetId = activeClosing.id;
     try {
-      await reviewShiftClosing(activeClosing.id, 'approve');
+      await reviewShiftClosing(targetId, 'approve');
+      // Try automatic Drive archival silently if an active verified RAM Drive session exists
+      try {
+        const saved = await archiveClosingToDrive(targetId, { interactiveAuthIfNeeded: false });
+        setArchiveFeedback({
+          type: 'success',
+          message: `تم اعتماد الإقفال وأرشفة ملف Excel (${saved.driveExcelFileName}) والتحقق منه في Google Drive.`,
+        });
+      } catch (archErr: any) {
+        setArchiveFeedback({
+          type: 'warning',
+          message:
+            archErr?.message ||
+            'تم اعتماد الإقفال رسمياً. يرجى الضغط على «أرشفة في Google Drive» لرفع ملف Excel.',
+        });
+      }
       setActiveClosing(null);
     } catch (err: any) {
       setActionError(err?.message || 'فشل اعتماد الإقفال.');
@@ -98,14 +247,31 @@ export const ClosingsReview: React.FC = () => {
 
     setReviewLoading(true);
     setActionError(null);
+    setArchiveFeedback(null);
+    const targetId = activeClosing.id;
     try {
       await adminCorrectClosing({
-        closingId: activeClosing.id,
+        closingId: targetId,
         cashSales: corrCalc.cashSales,
         cardSales: corrCalc.cardSales,
         expenses: corrCalc.expenses,
         correctionReason: corrReason,
       });
+      // Attempt immediate re-archival (v+1) if RAM Drive session is active
+      try {
+        const saved = await archiveClosingToDrive(targetId, { interactiveAuthIfNeeded: false });
+        setArchiveFeedback({
+          type: 'success',
+          message: `تم توثيق التصحيح الإداري وإصدار ملف Excel الجديد v${saved.driveRevision} (${saved.driveExcelFileName}) في Google Drive.`,
+        });
+      } catch (archErr: any) {
+        setArchiveFeedback({
+          type: 'warning',
+          message:
+            archErr?.message ||
+            'تم توثيق التصحيح الإداري وأصبح الإقفال بحاجة لإعادة الأرشفة في Google Drive.',
+        });
+      }
       setActiveClosing(null);
       setIsCorrecting(false);
     } catch (err: any) {
@@ -143,6 +309,59 @@ export const ClosingsReview: React.FC = () => {
           </button>
         )}
       </div>
+
+      {/* Pending Drive Archival Banner */}
+      {pendingSyncClosings.length > 0 && (
+        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5 text-amber-700 dark:text-amber-300">
+            <CloudUpload className="w-5 h-5 text-amber-500 shrink-0" />
+            <div>
+              <span className="font-bold block">
+                يوجد ({pendingSyncClosings.length}) إقفال معتمد بانتظار الأرشفة أو التحديث في Google Drive
+              </span>
+              <span className="text-[11px] opacity-85">
+                يتم توليد ملفات Excel (.xlsx) وتخزينها في مجلد الشهر والتحقق من قراءتها قبل اعتماد حالة الأرشفة.
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleBatchArchive}
+            disabled={batchArchiveLoading}
+            className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${batchArchiveLoading ? 'animate-spin' : ''}`} />
+            <span>
+              {batchArchiveLoading ? 'جاري رفع والتحقق من الملفات...' : 'أرشفة الكل في Google Drive'}
+            </span>
+          </button>
+        </div>
+      )}
+
+      {/* Archival Operation Feedback */}
+      {archiveFeedback && (
+        <div
+          className={`p-3.5 rounded-xl border text-xs flex items-center justify-between gap-3 ${
+            archiveFeedback.type === 'success'
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+              : archiveFeedback.type === 'warning'
+              ? 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
+              : 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 shrink-0" />
+            <span>{archiveFeedback.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setArchiveFeedback(null)}
+            className="opacity-70 hover:opacity-100"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Filter Bar */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-4 rounded-2xl bg-white dark:bg-[#0c1829] border border-slate-200 dark:border-slate-800 shadow-sm">
@@ -248,9 +467,20 @@ export const ClosingsReview: React.FC = () => {
                     <span>{closing.period === 'morning' ? 'وردية صباحية' : 'وردية مسائية'}</span>
                   </div>
                 </div>
-                <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${badge.class}`}>
-                  {badge.label}
-                </span>
+                <div className="flex flex-col items-end gap-1">
+                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${badge.class}`}>
+                    {badge.label}
+                  </span>
+                  {closing.status === 'approved' && (
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                        getArchiveBadge(closing).class
+                      }`}
+                    >
+                      {getArchiveBadge(closing).label}
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2 text-xs">
@@ -321,6 +551,7 @@ export const ClosingsReview: React.FC = () => {
               <th className="p-4 text-start">الباقي بالصندوق</th>
               <th className="p-4 text-start">صافي الفترة</th>
               <th className="p-4 text-start">الحالة</th>
+              <th className="p-4 text-start">أرشفة Drive</th>
               <th className="p-4 text-start">معاينة</th>
             </tr>
           </thead>
@@ -392,6 +623,40 @@ export const ClosingsReview: React.FC = () => {
                     </span>
                   </td>
                   <td className="p-4 font-sans">
+                    {(() => {
+                      const archBadge = getArchiveBadge(closing);
+                      const archRecord = archiveMap.get(closing.id);
+                      const needsSync =
+                        closing.status === 'approved' &&
+                        (!archRecord || archRecord.archiveStatus !== 'archived');
+                      return (
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${archBadge.class}`}
+                            title={archRecord?.archiveError || archRecord?.driveExcelFileName || ''}
+                          >
+                            {archBadge.label}
+                          </span>
+                          {needsSync && (
+                            <button
+                              type="button"
+                              onClick={() => handleArchiveSingle(closing.id)}
+                              disabled={archiveBusyId === closing.id}
+                              title="أرشفة ملف Excel في Google Drive"
+                              className="p-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-500 border border-amber-500/30 disabled:opacity-50"
+                            >
+                              <CloudUpload
+                                className={`w-3.5 h-3.5 ${
+                                  archiveBusyId === closing.id ? 'animate-pulse' : ''
+                                }`}
+                              />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </td>
+                  <td className="p-4 font-sans">
                     <button
                       onClick={() => {
                         setActiveClosing(closing);
@@ -461,7 +726,7 @@ export const ClosingsReview: React.FC = () => {
 
               {/* Status Notice */}
               {activeClosing.status === 'approved' && !isCorrecting && (
-                <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-700 dark:text-amber-300 flex items-center justify-between gap-3">
+                <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-700 dark:text-amber-300 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <Lock className="w-4 h-4 text-amber-500 shrink-0" />
                     <span>هذا الإقفال معتمد رسمياً ومقفل ضد التعديلات العادية.</span>
@@ -475,6 +740,120 @@ export const ClosingsReview: React.FC = () => {
                   </button>
                 </div>
               )}
+
+              {/* Google Drive Excel Archival Details & Controls (Approved Closings Only) */}
+              {activeClosing.status === 'approved' && (() => {
+                const arch = archiveMap.get(activeClosing.id);
+                const isArchived = arch?.archiveStatus === 'archived';
+                const hasDriveFile = Boolean(arch?.driveExcelFileId);
+                const isOrgOwner = Boolean(currentUser && currentOrg && currentUser.uid === currentOrg.ownerId);
+                const archBadge = getArchiveBadge(activeClosing);
+                const driveUrl = arch?.driveExcelWebViewLink
+                  ? currentOrg?.driveAccountEmail
+                    ? `${arch.driveExcelWebViewLink}${
+                        arch.driveExcelWebViewLink.includes('?') ? '&' : '?'
+                      }authuser=${encodeURIComponent(currentOrg.driveAccountEmail)}`
+                    : arch.driveExcelWebViewLink
+                  : null;
+
+                return (
+                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-[#070e17] border border-slate-200 dark:border-slate-800 text-xs space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
+                        <CloudUpload className="w-4 h-4 text-amber-500" />
+                        <span>أرشفة Excel في Google Drive</span>
+                      </div>
+                      <span className={`px-2.5 py-0.5 rounded-full text-[11px] border ${archBadge.class}`}>
+                        {archBadge.label}
+                      </span>
+                    </div>
+
+                    {arch?.driveExcelFileName && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-600 dark:text-slate-300 font-mono">
+                        <div className="truncate" title={arch.driveExcelFileName}>
+                          الملف: {arch.driveExcelFileName}
+                        </div>
+                        <div>
+                          الإصدار: v{arch.driveRevision || 1} • الشهر: {arch.yearMonth}
+                        </div>
+                        {arch.drivePayloadHash && (
+                          <div className="sm:col-span-2 truncate text-slate-500" title={arch.drivePayloadHash}>
+                            SHA-256: {arch.drivePayloadHash}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {arch?.archiveStatus === 'failed' && arch.archiveError && (
+                      <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-500 text-[11px]">
+                        سبب آخر فشل: {arch.archiveError}
+                      </div>
+                    )}
+
+                    {!isOrgOwner && (
+                      <div className="p-2.5 rounded-xl bg-slate-200/70 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 text-[11px]">
+                        عمليات الرفع والتنزيل المباشر من Google Drive مقتصرة على مالك المؤسسة المرتبط حسابه ({currentOrg?.ownerName}).
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      {!isArchived && (
+                        <button
+                          type="button"
+                          onClick={() => handleArchiveSingle(activeClosing.id)}
+                          disabled={archiveBusyId === activeClosing.id || !isOrgOwner}
+                          className="px-3.5 py-2 rounded-xl font-bold text-xs bg-amber-400 hover:bg-amber-300 text-slate-950 flex items-center gap-1.5 disabled:opacity-50"
+                        >
+                          <CloudUpload className="w-3.5 h-3.5" />
+                          <span>
+                            {archiveBusyId === activeClosing.id
+                              ? 'جاري الإنشاء والرفع والتحقق...'
+                              : arch?.archiveStatus === 'stale'
+                              ? 'إصدار وأرشفة النسخة المحدثة في Drive'
+                              : arch?.archiveStatus === 'failed'
+                              ? 'إعادة المحاولة في Google Drive'
+                              : 'أرشفة في Google Drive'}
+                          </span>
+                        </button>
+                      )}
+
+                      {hasDriveFile && (
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadOriginalFromDrive(activeClosing.id)}
+                          disabled={downloadBusyId === activeClosing.id || archiveBusyId === activeClosing.id || !isOrgOwner}
+                          className="px-3.5 py-2 rounded-xl font-semibold text-xs bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-white border border-slate-300 dark:border-slate-700 flex items-center gap-1.5 disabled:opacity-50"
+                        >
+                          <Download className="w-3.5 h-3.5 text-sky-400" />
+                          <span>
+                            {downloadBusyId === activeClosing.id
+                              ? 'جاري التنزيل والتحقق من Drive...'
+                              : `تنزيل الملف الأصلي من Google Drive (v${arch?.driveRevision || 1})`}
+                          </span>
+                        </button>
+                      )}
+
+                      {driveUrl && (
+                        <a
+                          href={driveUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3.5 py-2 rounded-xl font-semibold text-xs bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-white border border-slate-300 dark:border-slate-700 flex items-center gap-1.5"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5 text-amber-500" />
+                          <span>فتح في Google Drive</span>
+                        </a>
+                      )}
+                    </div>
+
+                    {!hasDriveFile && (
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        لا يوجد ملف Excel محفوظ في Google Drive لهذا الإقفال حتى الآن. اضغط «أرشفة في Google Drive» لحفظ النسخة الرسمية الأولى.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Previous Correction History if exists */}
               {activeClosing.previousValues && (
@@ -712,8 +1091,8 @@ export const ClosingsReview: React.FC = () => {
                 </div>
               )}
 
-              {/* Action Buttons for Pending Closings */}
-              {activeClosing.status !== 'approved' && !isRejecting && !isCorrecting && (
+              {/* Action Buttons ONLY for Pending Review Closings (Matches firestore.rules auditLogs requirement) */}
+              {activeClosing.status === 'pending_review' && !isRejecting && !isCorrecting && (
                 <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
                   <button
                     onClick={() => setIsRejecting(true)}
@@ -732,6 +1111,17 @@ export const ClosingsReview: React.FC = () => {
                     <CheckCircle2 className="w-4 h-4 text-slate-950" />
                     <span>{reviewLoading ? 'جاري الاعتماد...' : 'اعتماد الإقفال رسمياً'}</span>
                   </button>
+                </div>
+              )}
+
+              {(activeClosing.status === 'draft' || activeClosing.status === 'rejected') && (
+                <div className="p-3.5 rounded-xl bg-slate-100 dark:bg-slate-800/70 border border-slate-300 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
+                  <span>
+                    {activeClosing.status === 'draft'
+                      ? 'هذا الإقفال ما زال مسودة لدى الموظف ولم يُرفع للمراجعة بعد؛ لذلك لا يمكن اعتماده أو إرجاعه قبل إرساله للاعتماد.'
+                      : 'هذا الإقفال مُعاد حالياً للموظف للتعديل؛ وبانتظار إعادة إرساله للمراجعة قبل التمكن من اعتماده.'}
+                  </span>
                 </div>
               )}
             </div>

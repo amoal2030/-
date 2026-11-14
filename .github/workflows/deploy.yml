@@ -42,9 +42,17 @@ jobs:
             npm install
           fi
 
+      - name: Check Drive OAuth Client ID Build Config
+        env:
+          HAS_DRIVE_CLIENT_ID: ${{ (vars.VITE_GOOGLE_DRIVE_CLIENT_ID != '' || secrets.VITE_GOOGLE_DRIVE_CLIENT_ID != '') && 'true' || 'false' }}
+        run: |
+          if [ "$HAS_DRIVE_CLIENT_ID" != "true" ]; then
+            echo "::warning::VITE_GOOGLE_DRIVE_CLIENT_ID is not set in GitHub Variables or Secrets; Drive linking will be disabled in this build."
+          fi
+
       - name: Build Application for Production
         env:
-          VITE_GOOGLE_DRIVE_CLIENT_ID: ${{ vars.VITE_GOOGLE_DRIVE_CLIENT_ID }}
+          VITE_GOOGLE_DRIVE_CLIENT_ID: ${{ vars.VITE_GOOGLE_DRIVE_CLIENT_ID || secrets.VITE_GOOGLE_DRIVE_CLIENT_ID }}
         run: npm run build
 
       - name: Setup GitHub Pages

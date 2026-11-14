@@ -16,7 +16,19 @@
  * - Halts on conflict or non-matching stored folders without deleting/moving/renaming Drive items
  */
 
-import { Branch, DriveMonthFolderRef, Organization } from '../types';
+import {
+  Branch,
+  ClosingArchiveRecord,
+  DriveMonthFolderRef,
+  Organization,
+  ShiftClosing,
+} from '../types';
+import {
+  CLOSING_XLSX_MIME,
+  GeneratedClosingExcel,
+  verifyDownloadedClosingExcel,
+  verifyOriginalArchivedExcelFromDrive,
+} from './excelReportService';
 
 export interface DriveTokenSession {
   accessToken: string;
@@ -1436,4 +1448,574 @@ export async function verifyDriveWriteReadCapability(params: {
     }
     throw err;
   }
+}
+
+export interface ClosingExcelDriveUploadResult {
+  fileId: string;
+  fileName: string;
+  webViewLink: string;
+  monthFolder: DriveMonthFolderRef;
+  orgFolder: DriveFolderRef;
+  branchFolder: DriveFolderRef;
+  payloadHash: string;
+  revision: number;
+  updatedExisting: boolean;
+  verifiedAt: string;
+}
+
+/**
+ * Searches inside a concrete month folder for existing closing Excel files matching
+ * systemId, role, orgId, branchId, closingId, and target revision.
+ */
+async function listMatchingClosingExcelFiles(params: {
+  token: string;
+  monthFolderId: string;
+  expectedAppProperties: Record<string, string>;
+  fileNameForErrors: string;
+}): Promise<any[]> {
+  const { token, monthFolderId, expectedAppProperties, fileNameForErrors } = params;
+
+  const queryParts: string[] = [
+    `mimeType = '${CLOSING_XLSX_MIME}'`,
+    `trashed = false`,
+    `'${escapeDriveQueryValue(monthFolderId)}' in parents`,
+  ];
+
+  for (const [key, value] of Object.entries(expectedAppProperties)) {
+    queryParts.push(
+      `appProperties has { key='${escapeDriveQueryValue(key)}' and value='${escapeDriveQueryValue(value)}' }`
+    );
+  }
+
+  const queryFilter = queryParts.join(' and ');
+  let rawFiles: any[] = [];
+  let pageToken: string | undefined = undefined;
+
+  do {
+    const url = new URL('https://www.googleapis.com/drive/v3/files');
+    url.searchParams.set('q', queryFilter);
+    url.searchParams.set(
+      'fields',
+      'nextPageToken, files(id, name, mimeType, appProperties, webViewLink, trashed, parents, size)'
+    );
+    url.searchParams.set('spaces', 'drive');
+    url.searchParams.set('includeItemsFromAllDrives', 'false');
+    url.searchParams.set('supportsAllDrives', 'false');
+    url.searchParams.set('pageSize', '50');
+    if (pageToken) {
+      url.searchParams.set('pageToken', pageToken);
+    }
+
+    let res: Response;
+    try {
+      res = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch (networkErr: any) {
+      throw new Error(
+        `فشل الاتصال أثناء البحث عن ملف الإقفال في Google Drive (${fileNameForErrors}): ${
+          networkErr?.message || networkErr
+        }`
+      );
+    }
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw formatDriveHttpError({
+        status: res.status,
+        apiMessage: errJson?.error?.message,
+        folderRoleLabel: 'ملف إقفال Excel',
+        folderName: fileNameForErrors,
+        operation: 'search',
+        parentId: monthFolderId,
+      });
+    }
+
+    const data = await res.json();
+    if (Array.isArray(data.files)) {
+      rawFiles = rawFiles.concat(data.files);
+    }
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+
+  return rawFiles.filter((file) => {
+    if (!file || typeof file.id !== 'string') return false;
+    if (file.trashed === true) return false;
+    if (file.mimeType !== CLOSING_XLSX_MIME) return false;
+    if (!Array.isArray(file.parents) || !file.parents.includes(monthFolderId)) return false;
+    if (findAppPropertiesMismatch(file.appProperties, expectedAppProperties) !== null) return false;
+    return true;
+  });
+}
+
+/**
+ * Uploads an approved closing's .xlsx workbook to Google Drive under
+ *   AL EQFAL - {org.name} - {org.id} / {branch.name} - {branch.code} / {YYYY-MM}
+ * Prevents duplicates per (closingId, revision) via appProperties search + PATCH on retry,
+ * strictly enforces new Drive file ID when re-archiving after admin correction,
+ * and reads the file back via files.get + files.get?alt=media + exceljs verification
+ * before returning success.
+ */
+export async function uploadAndVerifyClosingExcelToDrive(params: {
+  token: string;
+  org: Organization;
+  branch: Branch;
+  closing: ShiftClosing;
+  revision: number;
+  excelPayload: GeneratedClosingExcel;
+  forbiddenPreviousFileId?: string;
+}): Promise<ClosingExcelDriveUploadResult> {
+  const {
+    token,
+    org,
+    branch,
+    closing,
+    revision,
+    excelPayload,
+    forbiddenPreviousFileId,
+  } = params;
+
+  if (!token || !token.trim()) {
+    throw new Error('رمز تفويض Google Drive غير متاح لرفع ملف الإقفال.');
+  }
+  if (!Number.isInteger(revision) || revision < 1) {
+    throw new Error('رقم إصدار الأرشفة غير صالح.');
+  }
+
+  // 1. Ensure & verify full folder hierarchy (Org -> Branch -> YYYY-MM)
+  const { orgFolder, branchFolder, monthFolder } = await ensureBranchMonthDriveFolder({
+    token,
+    org,
+    branch,
+    yearMonth: excelPayload.yearMonth,
+  });
+
+  // 2. Search inside monthFolder for existing file matching (closingId, revision) to prevent duplicates on retry
+  const searchAppProperties: Record<string, string> = {
+    systemId: 'al_eqfal',
+    role: 'closing_excel',
+    orgId: org.id,
+    branchId: branch.id,
+    closingId: closing.id,
+    revision: String(revision),
+  };
+
+  const fullAppProperties: Record<string, string> = {
+    ...searchAppProperties,
+    yearMonth: excelPayload.yearMonth,
+    payloadHash: excelPayload.payloadHash,
+  };
+
+  const existingMatches = await listMatchingClosingExcelFiles({
+    token,
+    monthFolderId: monthFolder.folderId,
+    expectedAppProperties: searchAppProperties,
+    fileNameForErrors: excelPayload.fileName,
+  });
+
+  if (existingMatches.length > 1) {
+    const idsList = existingMatches.map((f) => f.id).join(' , ');
+    throw new Error(
+      `تم العثور على (${existingMatches.length}) ملفات مكررة للإصدار v${revision} من هذا الإقفال داخل Drive (${idsList}). تم إيقاف الرفع لمنع التضارب.`
+    );
+  }
+
+  const targetFileIdToPatch: string | undefined =
+    existingMatches.length === 1 ? existingMatches[0].id : undefined;
+
+  if (targetFileIdToPatch && forbiddenPreviousFileId && targetFileIdToPatch === forbiddenPreviousFileId) {
+    throw new Error(
+      `تعارض معرّف ملف الإصدار الجديد مع معرّف الإصدار السابق (${forbiddenPreviousFileId}). يجب حفظ الإصدار المصحح في ملف مستقل.`
+    );
+  }
+
+  // 3. Build binary-safe multipart/related body
+  const boundary = `al_eqfal_xlsx_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const metadataPayload: Record<string, any> = {
+    name: excelPayload.fileName,
+    mimeType: CLOSING_XLSX_MIME,
+    appProperties: fullAppProperties,
+  };
+  if (!targetFileIdToPatch) {
+    metadataPayload.parents = [monthFolder.folderId];
+  }
+
+  const encoder = new TextEncoder();
+  const headerPart = encoder.encode(
+    `--${boundary}\r\n` +
+      `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+      `${JSON.stringify(metadataPayload)}\r\n` +
+      `--${boundary}\r\n` +
+      `Content-Type: ${CLOSING_XLSX_MIME}\r\n\r\n`
+  );
+  const footerPart = encoder.encode(`\r\n--${boundary}--`);
+
+  const multipartBytes = new Uint8Array(
+    headerPart.byteLength + excelPayload.bytes.byteLength + footerPart.byteLength
+  );
+  multipartBytes.set(headerPart, 0);
+  multipartBytes.set(excelPayload.bytes, headerPart.byteLength);
+  multipartBytes.set(footerPart, headerPart.byteLength + excelPayload.bytes.byteLength);
+
+  const uploadUrl = targetFileIdToPatch
+    ? `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(
+        targetFileIdToPatch
+      )}?uploadType=multipart&fields=id,name,mimeType,webViewLink,parents,trashed,appProperties,size`
+    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink,parents,trashed,appProperties,size';
+
+  let uploadRes: Response;
+  try {
+    uploadRes = await fetch(uploadUrl, {
+      method: targetFileIdToPatch ? 'PATCH' : 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`,
+      },
+      body: multipartBytes,
+    });
+  } catch (networkErr: any) {
+    throw new Error(
+      `فشل الاتصال أثناء رفع ملف Excel (${excelPayload.fileName}) إلى Google Drive: ${
+        networkErr?.message || networkErr
+      }`
+    );
+  }
+
+  if (!uploadRes.ok) {
+    const errJson = await uploadRes.json().catch(() => ({}));
+    throw formatDriveHttpError({
+      status: uploadRes.status,
+      apiMessage: errJson?.error?.message,
+      folderRoleLabel: 'ملف إقفال Excel',
+      folderName: excelPayload.fileName,
+      operation: 'create',
+      folderId: targetFileIdToPatch,
+      parentId: monthFolder.folderId,
+    });
+  }
+
+  const uploaded = await uploadRes.json();
+  if (!uploaded?.id || typeof uploaded.id !== 'string') {
+    throw new Error('استجابة رفع ملف Excel لم تُرجع معرّف ملف (id) صالحاً من Google Drive.');
+  }
+
+  const fileId: string = uploaded.id;
+  if (forbiddenPreviousFileId && fileId === forbiddenPreviousFileId) {
+    throw new Error(
+      `معرّف ملف Excel المرفوع (${fileId}) يطابق معرّف الإصدار السابق؛ يلزم ملف مستقل للإصدار المصحح.`
+    );
+  }
+
+  // 4. Strict metadata read-back via files.get (bounded 404 retry for Drive indexing latency)
+  const retryDelays = [400, 800];
+  let verifiedMeta: any = null;
+  let last404Msg: string | undefined;
+
+  for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+    if (attempt > 0) {
+      await sleep(retryDelays[attempt - 1]);
+    }
+
+    let metaRes: Response;
+    try {
+      metaRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+          fileId
+        )}?fields=id,name,mimeType,webViewLink,parents,trashed,appProperties,size`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+    } catch (networkErr: any) {
+      throw new Error(
+        `فشل الاتصال أثناء التحقق من بيانات ملف Excel في Drive: ${networkErr?.message || networkErr}`
+      );
+    }
+
+    if (metaRes.status === 404) {
+      const errJson = await metaRes.json().catch(() => ({}));
+      last404Msg = errJson?.error?.message;
+      if (attempt < retryDelays.length) {
+        continue;
+      }
+      throw formatDriveHttpError({
+        status: 404,
+        apiMessage: last404Msg,
+        folderRoleLabel: 'ملف إقفال Excel',
+        folderName: excelPayload.fileName,
+        operation: 'get',
+        folderId: fileId,
+        parentId: monthFolder.folderId,
+      });
+    }
+
+    if (!metaRes.ok) {
+      const errJson = await metaRes.json().catch(() => ({}));
+      throw formatDriveHttpError({
+        status: metaRes.status,
+        apiMessage: errJson?.error?.message,
+        folderRoleLabel: 'ملف إقفال Excel',
+        folderName: excelPayload.fileName,
+        operation: 'get',
+        folderId: fileId,
+        parentId: monthFolder.folderId,
+      });
+    }
+
+    verifiedMeta = await metaRes.json();
+    break;
+  }
+
+  if (!verifiedMeta) {
+    throw formatDriveHttpError({
+      status: 404,
+      apiMessage: last404Msg,
+      folderRoleLabel: 'ملف إقفال Excel',
+      folderName: excelPayload.fileName,
+      operation: 'get',
+      folderId: fileId,
+      parentId: monthFolder.folderId,
+    });
+  }
+
+  if (verifiedMeta.id !== fileId || verifiedMeta.trashed === true) {
+    throw new Error(`ملف Excel (${fileId}) غير متاح أو موجود في سلة مهملات Google Drive.`);
+  }
+  if (verifiedMeta.mimeType !== CLOSING_XLSX_MIME) {
+    throw new Error(
+      `نوع ملف Excel المقروء من Google Drive غير صحيح (${verifiedMeta.mimeType || 'غير معروف'}).`
+    );
+  }
+  if (verifiedMeta.name !== excelPayload.fileName) {
+    throw new Error(
+      `اسم ملف Excel المقروء (${verifiedMeta.name}) لا يطابق الاسم المتوقع (${excelPayload.fileName}).`
+    );
+  }
+  if (!Array.isArray(verifiedMeta.parents) || !verifiedMeta.parents.includes(monthFolder.folderId)) {
+    throw new Error(
+      `ملف Excel المرفوع لا يقع داخل مجلد الشهر الصحيح (${monthFolder.folderId}).`
+    );
+  }
+  const propsErr = findAppPropertiesMismatch(verifiedMeta.appProperties, fullAppProperties);
+  if (propsErr) {
+    throw new Error(`خصائص التحقق (appProperties) لملف Excel لا تطابق المتوقع: ${propsErr}`);
+  }
+  if (Number(verifiedMeta.size) !== excelPayload.byteLength) {
+    throw new Error(
+      `حجم ملف Excel في Drive (${verifiedMeta.size}) لا يطابق الحجم المرفوع (${excelPayload.byteLength}).`
+    );
+  }
+
+  // 5. Mandatory binary download + SHA-256 + exceljs content verification via files.get?alt=media
+  let mediaRes: Response;
+  try {
+    mediaRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+  } catch (networkErr: any) {
+    throw new Error(
+      `فشل الاتصال أثناء إعادة قراءة محتوى ملف Excel من Google Drive: ${
+        networkErr?.message || networkErr
+      }`
+    );
+  }
+
+  if (!mediaRes.ok) {
+    const errJson = await mediaRes.json().catch(() => ({}));
+    throw formatDriveHttpError({
+      status: mediaRes.status,
+      apiMessage: errJson?.error?.message,
+      folderRoleLabel: 'محتوى ملف إقفال Excel',
+      folderName: excelPayload.fileName,
+      operation: 'get',
+      folderId: fileId,
+      parentId: monthFolder.folderId,
+    });
+  }
+
+  const downloadedBuffer = await mediaRes.arrayBuffer();
+  await verifyDownloadedClosingExcel({
+    fileBytes: downloadedBuffer,
+    expectedFileSha256: excelPayload.fileSha256,
+    expectedClosing: closing,
+    expectedOrg: org,
+    expectedPayloadHash: excelPayload.payloadHash,
+    expectedRevision: revision,
+  });
+
+  const rawWebViewLink =
+    typeof verifiedMeta.webViewLink === 'string' &&
+    /^https:\/\/[a-zA-Z0-9.-]+\/.*$/.test(verifiedMeta.webViewLink) &&
+    verifiedMeta.webViewLink.length >= 12 &&
+    verifiedMeta.webViewLink.length <= 512
+      ? verifiedMeta.webViewLink
+      : `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view`;
+
+  return {
+    fileId,
+    fileName: excelPayload.fileName,
+    webViewLink: rawWebViewLink,
+    monthFolder,
+    orgFolder,
+    branchFolder,
+    payloadHash: excelPayload.payloadHash,
+    revision,
+    updatedExisting: Boolean(targetFileIdToPatch),
+    verifiedAt: new Date().toISOString(),
+  };
+}
+
+export interface DownloadedOriginalDriveExcel {
+  bytes: Uint8Array;
+  fileName: string;
+  fileId: string;
+  revision: number;
+  verified: true;
+}
+
+/**
+ * Downloads the original archived Excel (.xlsx) file directly from Google Drive
+ * using its stored Drive File ID and `alt=media`, after strict metadata, ownership,
+ * and exceljs content verification.
+ */
+export async function downloadOriginalClosingExcelFromDrive(params: {
+  token: string;
+  org: Organization;
+  closing: ShiftClosing;
+  archiveRecord: ClosingArchiveRecord;
+}): Promise<DownloadedOriginalDriveExcel> {
+  const { token, org, closing, archiveRecord } = params;
+
+  if (!token || !token.trim()) {
+    throw new Error('رمز تفويض Google Drive غير متاح لتنزيل الملف الأصلي.');
+  }
+  if (!archiveRecord?.driveExcelFileId) {
+    throw new Error('لا يوجد معرّف ملف Google Drive مؤرشف لهذا الإقفال حتى الآن.');
+  }
+  if (archiveRecord.orgId !== org.id || archiveRecord.closingId !== closing.id) {
+    throw new Error('بيانات سجل الأرشفة لا تطابق المؤسسة أو الإقفال المحدد.');
+  }
+
+  const fileId = archiveRecord.driveExcelFileId;
+  const fallbackName = archiveRecord.driveExcelFileName || `${closing.id}.xlsx`;
+
+  // 1. Verify file metadata in Drive via files.get
+  let metaRes: Response;
+  try {
+    metaRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+        fileId
+      )}?fields=id,name,mimeType,parents,trashed,appProperties,size`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+  } catch (networkErr: any) {
+    throw new Error(
+      `فشل الاتصال أثناء التحقق من بيانات ملف Excel في Google Drive: ${networkErr?.message || networkErr}`
+    );
+  }
+
+  if (!metaRes.ok) {
+    const errJson = await metaRes.json().catch(() => ({}));
+    throw formatDriveHttpError({
+      status: metaRes.status,
+      apiMessage: errJson?.error?.message,
+      folderRoleLabel: 'ملف إقفال Excel المؤرشف',
+      folderName: fallbackName,
+      operation: 'get',
+      folderId: fileId,
+      parentId: archiveRecord.driveMonthFolderId,
+    });
+  }
+
+  const meta = await metaRes.json();
+  if (!meta?.id || meta.id !== fileId || meta.trashed === true) {
+    throw new Error(`الملف المؤرشف (${fileId}) غير متاح أو محذوف في سلة مهملات Google Drive.`);
+  }
+  if (meta.mimeType !== CLOSING_XLSX_MIME) {
+    throw new Error(
+      `نوع الملف المسترجع من Google Drive (${meta.mimeType || 'غير معروف'}) ليس ملف Excel (.xlsx) صالحاً.`
+    );
+  }
+  if (
+    archiveRecord.driveMonthFolderId &&
+    (!Array.isArray(meta.parents) || !meta.parents.includes(archiveRecord.driveMonthFolderId))
+  ) {
+    throw new Error(
+      `ملف Excel (${fileId}) لم يعد داخل مجلد الشهر المسجل (${archiveRecord.driveMonthFolderId}).`
+    );
+  }
+
+  const expectedProps: Record<string, string> = {
+    systemId: 'al_eqfal',
+    role: 'closing_excel',
+    orgId: org.id,
+    branchId: closing.branchId,
+    closingId: closing.id,
+  };
+  if (typeof archiveRecord.driveRevision === 'number') {
+    expectedProps.revision = String(archiveRecord.driveRevision);
+  }
+  if (archiveRecord.drivePayloadHash) {
+    expectedProps.payloadHash = archiveRecord.drivePayloadHash;
+  }
+
+  const propsErr = findAppPropertiesMismatch(meta.appProperties, expectedProps);
+  if (propsErr) {
+    throw new Error(`تعارض خصائص الملف المخزن في Google Drive: ${propsErr}`);
+  }
+
+  // 2. Download original binary bytes directly via files.get?alt=media
+  let mediaRes: Response;
+  try {
+    mediaRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+  } catch (networkErr: any) {
+    throw new Error(
+      `فشل الاتصال أثناء تنزيل ملف Excel الأصلي من Google Drive: ${networkErr?.message || networkErr}`
+    );
+  }
+
+  if (!mediaRes.ok) {
+    const errJson = await mediaRes.json().catch(() => ({}));
+    throw formatDriveHttpError({
+      status: mediaRes.status,
+      apiMessage: errJson?.error?.message,
+      folderRoleLabel: 'تنزيل ملف Excel الأصلي',
+      folderName: fallbackName,
+      operation: 'get',
+      folderId: fileId,
+      parentId: archiveRecord.driveMonthFolderId,
+    });
+  }
+
+  const downloadedBuffer = await mediaRes.arrayBuffer();
+  const downloadedBytes = new Uint8Array(downloadedBuffer);
+
+  if (meta.size !== undefined && Number(meta.size) > 0 && downloadedBytes.byteLength !== Number(meta.size)) {
+    throw new Error(
+      `حجم الملف المنزل من Drive (${downloadedBytes.byteLength}) لا يطابق الحجم المسجل (${meta.size}).`
+    );
+  }
+
+  const verifiedContent = await verifyOriginalArchivedExcelFromDrive({
+    fileBytes: downloadedBytes,
+    archiveRecord,
+  });
+
+  return {
+    bytes: downloadedBytes,
+    fileName: meta.name || fallbackName,
+    fileId,
+    revision: verifiedContent.revision,
+    verified: true,
+  };
 }

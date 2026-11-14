@@ -1354,6 +1354,312 @@ async function runClosingArchivesTestSuite() {
     await assertFails(otherMgrDb.doc('closingArchives/cls_approved_br2').delete());
   });
 
+  await runCase('20. Manager can update closingArchives keeping pending_drive_sync within transition and field rules', async () => {
+    // Allowed: mgr_01 updates cls_emp1_pending (currently pending_drive_sync, parent pending_review) keeping pending_drive_sync
+    await assertSucceeds(
+      mgrDb.doc('closingArchives/cls_emp1_pending').update({
+        archiveStatus: 'pending_drive_sync',
+        updatedAt: '2026-11-10T08:30:00Z',
+      })
+    );
+
+    // Also allowed: mgr_01 updates a pending_drive_sync archive whose parent closing is already approved (only updatedAt changed)
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await db.doc('closings/cls_approved_pending_mgr').set({
+        id: 'cls_approved_pending_mgr',
+        orgId: 'org_main',
+        branchId: 'br_01',
+        branchName: 'الفرع الأول',
+        employeeId: 'emp_01',
+        employeeName: 'موظف الفرع الأول',
+        date: '2026-11-14',
+        period: 'evening',
+        cashSales: 1000,
+        cardSales: 1500,
+        totalSales: 2500,
+        expenses: 100,
+        remainingInBox: 900,
+        netPeriod: 2400,
+        status: 'approved',
+        createdAt: '2026-11-14T16:00:00Z',
+        updatedAt: '2026-11-14T18:00:00Z',
+      });
+      await db.doc('closingArchives/cls_approved_pending_mgr').set({
+        closingId: 'cls_approved_pending_mgr',
+        orgId: 'org_main',
+        branchId: 'br_01',
+        yearMonth: '2026-11',
+        archiveStatus: 'pending_drive_sync',
+        updatedAt: '2026-11-14T18:01:00Z',
+      });
+    });
+
+    await assertSucceeds(
+      mgrDb.doc('closingArchives/cls_approved_pending_mgr').update({
+        archiveStatus: 'pending_drive_sync',
+        updatedAt: '2026-11-14T18:05:00Z',
+      })
+    );
+
+    // Blocked: keeping pending_drive_sync while injecting Drive proof fields (hasNoDriveProofFields violation)
+    await assertFails(
+      mgrDb.doc('closingArchives/cls_approved_pending_mgr').update({
+        archiveStatus: 'pending_drive_sync',
+        driveExcelFileId: DRIVE_FILE_V1,
+        updatedAt: '2026-11-14T18:06:00Z',
+      })
+    );
+
+    // Blocked: keeping pending_drive_sync while injecting archiveError
+    await assertFails(
+      mgrDb.doc('closingArchives/cls_approved_pending_mgr').update({
+        archiveStatus: 'pending_drive_sync',
+        archiveError: 'حقل خطأ غير مسموح مع pending_drive_sync',
+        updatedAt: '2026-11-14T18:07:00Z',
+      })
+    );
+  });
+
+  await runCase('21. Cross-org isolation: mgr_other cannot create or update closingArchives for org_main', async () => {
+    // Attempt 1 (Create): mgr_other tries to create archive for org_main closing using org_main orgId
+    await assertFails(
+      otherMgrDb.doc('closingArchives/cls_emp1_rejected').set({
+        closingId: 'cls_emp1_rejected',
+        orgId: 'org_main',
+        branchId: 'br_01',
+        yearMonth: '2026-11',
+        archiveStatus: 'pending_drive_sync',
+        updatedAt: '2026-11-11T17:20:00Z',
+      })
+    );
+
+    // Attempt 2 (Create with orgId spoofing): mgr_other claims orgId='org_other' while referencing org_main closing
+    await assertFails(
+      otherMgrDb.doc('closingArchives/cls_emp1_rejected').set({
+        closingId: 'cls_emp1_rejected',
+        orgId: 'org_other',
+        branchId: 'br_01',
+        yearMonth: '2026-11',
+        archiveStatus: 'pending_drive_sync',
+        updatedAt: '2026-11-11T17:21:00Z',
+      })
+    );
+
+    // Attempt 3 (Update): mgr_other tries to update pending_drive_sync archive in org_main
+    await assertFails(
+      otherMgrDb.doc('closingArchives/cls_emp1_pending').update({
+        archiveStatus: 'pending_drive_sync',
+        updatedAt: '2026-11-10T08:45:00Z',
+      })
+    );
+
+    // Attempt 4 (Update): mgr_other tries to update archived record in org_main
+    await assertFails(
+      otherMgrDb.doc('closingArchives/cls_approved_br1').update({
+        archiveStatus: 'failed',
+        archiveError: 'محاولة تخريب من مدير مؤسسة أخرى',
+        updatedAt: '2026-11-09T12:30:00Z',
+      })
+    );
+  });
+
+  await runCase('22. Employee cannot update closingArchives once parent closing transitions to approved', async () => {
+    const closingId = 'cls_emp1_post_approval_lock';
+
+    // Seed parent closing in pending_review + its closingArchive in pending_drive_sync
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await db.doc(`closings/${closingId}`).set({
+        id: closingId,
+        orgId: 'org_main',
+        branchId: 'br_01',
+        branchName: 'الفرع الأول',
+        employeeId: 'emp_01',
+        employeeName: 'موظف الفرع الأول',
+        date: '2026-11-14',
+        period: 'evening',
+        cashSales: 1400,
+        cardSales: 1600,
+        totalSales: 3000,
+        expenses: 150,
+        remainingInBox: 1250,
+        netPeriod: 2850,
+        status: 'pending_review',
+        createdAt: '2026-11-14T19:00:00Z',
+        updatedAt: '2026-11-14T19:00:00Z',
+      });
+      await db.doc(`closingArchives/${closingId}`).set({
+        closingId,
+        orgId: 'org_main',
+        branchId: 'br_01',
+        yearMonth: '2026-11',
+        archiveStatus: 'pending_drive_sync',
+        updatedAt: '2026-11-14T19:00:00Z',
+      });
+    });
+
+    // Sanity check: while pending_review, employee CAN update updatedAt on closingArchives
+    await assertSucceeds(
+      emp1Db.doc(`closingArchives/${closingId}`).update({
+        archiveStatus: 'pending_drive_sync',
+        updatedAt: '2026-11-14T19:02:00Z',
+      })
+    );
+
+    // Manager legitimately approves the parent closing atomically with CLOSING_APPROVED audit log
+    const approveBatch = mgrDb.batch();
+    approveBatch.update(mgrDb.doc(`closings/${closingId}`), {
+      status: 'approved',
+      reviewedBy: 'mgr_01',
+      reviewedByName: 'مدير المؤسسة الرئيسية',
+      reviewedAt: '2026-11-14T19:05:00Z',
+      updatedAt: '2026-11-14T19:05:00Z',
+    });
+    approveBatch.set(mgrDb.doc('auditLogs/log_approve_post_lock_01'), {
+      id: 'log_approve_post_lock_01',
+      orgId: 'org_main',
+      actorId: 'mgr_01',
+      actorName: 'مدير المؤسسة الرئيسية',
+      actorRole: 'manager',
+      action: 'CLOSING_APPROVED',
+      targetType: 'closing',
+      targetId: closingId,
+      details: 'اعتماد الإقفال للتحقق من قفل تحديثات الموظف في closingArchives بعد الاعتماد',
+      timestamp: '2026-11-14T19:05:00Z',
+    });
+    await assertSucceeds(approveBatch.commit());
+
+    // Now parent closing is 'approved': employee MUST be blocked from updating closingArchives even on allowed keys
+    await assertFails(
+      emp1Db.doc(`closingArchives/${closingId}`).update({
+        archiveStatus: 'pending_drive_sync',
+        updatedAt: '2026-11-14T19:10:00Z',
+      })
+    );
+  });
+
+  await runCase('23. Halala integer rules allow 0.1 + 0.2 = 0.30 during admin correction and reject sub-halala or mismatched math', async () => {
+    const closingId = 'cls_halala_precision_rules';
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc(`closings/${closingId}`).set({
+        id: closingId,
+        orgId: 'org_main',
+        branchId: 'br_01',
+        branchName: 'الفرع الأول',
+        employeeId: 'emp_01',
+        employeeName: 'موظف الفرع الأول',
+        date: '2026-11-15',
+        period: 'morning',
+        cashSales: 100,
+        cardSales: 200,
+        totalSales: 300,
+        expenses: 50,
+        remainingInBox: 50,
+        netPeriod: 250,
+        status: 'approved',
+        createdAt: '2026-11-15T08:00:00Z',
+        updatedAt: '2026-11-15T09:00:00Z',
+      });
+    });
+
+    // Rejected: 3 decimal places (sub-halala 0.145)
+    const badSubHalalaBatch = mgrDb.batch();
+    badSubHalalaBatch.update(mgrDb.doc(`closings/${closingId}`), {
+      cashSales: 0.145,
+      cardSales: 0.2,
+      expenses: 0,
+      totalSales: 0.345,
+      remainingInBox: 0.145,
+      netPeriod: 0.345,
+      previousValues: { cashSales: 100, cardSales: 200, expenses: 50, totalSales: 300 },
+      correctionReason: 'رفض دقة أقل من هللة',
+      correctedBy: 'mgr_01',
+      correctedByName: 'مدير المؤسسة الرئيسية',
+      correctedAt: '2026-11-15T10:00:00Z',
+      updatedAt: '2026-11-15T10:00:00Z',
+    });
+    badSubHalalaBatch.set(mgrDb.doc('auditLogs/log_halala_sub_reject'), {
+      id: 'log_halala_sub_reject',
+      orgId: 'org_main',
+      actorId: 'mgr_01',
+      actorName: 'مدير المؤسسة الرئيسية',
+      actorRole: 'manager',
+      action: 'CLOSING_ADMIN_CORRECTED',
+      targetType: 'closing',
+      targetId: closingId,
+      details: 'اختبار رفض أقل من هللة',
+      timestamp: '2026-11-15T10:00:00Z',
+      previousValues: { cashSales: 100, cardSales: 200, expenses: 50, totalSales: 300 },
+      newValues: { cashSales: 0.145, cardSales: 0.2, expenses: 0, totalSales: 0.345 },
+    });
+    await assertFails(badSubHalalaBatch.commit());
+
+    // Rejected: wrong total (0.1 + 0.2 = 0.31)
+    const badMathBatch = mgrDb.batch();
+    badMathBatch.update(mgrDb.doc(`closings/${closingId}`), {
+      cashSales: 0.1,
+      cardSales: 0.2,
+      expenses: 0,
+      totalSales: 0.31,
+      remainingInBox: 0.1,
+      netPeriod: 0.31,
+      previousValues: { cashSales: 100, cardSales: 200, expenses: 50, totalSales: 300 },
+      correctionReason: 'رفض إجمالي خاطئ',
+      correctedBy: 'mgr_01',
+      correctedByName: 'مدير المؤسسة الرئيسية',
+      correctedAt: '2026-11-15T10:01:00Z',
+      updatedAt: '2026-11-15T10:01:00Z',
+    });
+    badMathBatch.set(mgrDb.doc('auditLogs/log_halala_math_reject'), {
+      id: 'log_halala_math_reject',
+      orgId: 'org_main',
+      actorId: 'mgr_01',
+      actorName: 'مدير المؤسسة الرئيسية',
+      actorRole: 'manager',
+      action: 'CLOSING_ADMIN_CORRECTED',
+      targetType: 'closing',
+      targetId: closingId,
+      details: 'اختبار رفض خطأ حسابي',
+      timestamp: '2026-11-15T10:01:00Z',
+      previousValues: { cashSales: 100, cardSales: 200, expenses: 50, totalSales: 300 },
+      newValues: { cashSales: 0.1, cardSales: 0.2, expenses: 0, totalSales: 0.31 },
+    });
+    await assertFails(badMathBatch.commit());
+
+    // Allowed: exact 0.1 + 0.2 = 0.30 and 0.1 - 0.05 = 0.05 using integer Halala rules
+    const okBatch = mgrDb.batch();
+    okBatch.update(mgrDb.doc(`closings/${closingId}`), {
+      cashSales: 0.1,
+      cardSales: 0.2,
+      expenses: 0.05,
+      totalSales: 0.3,
+      remainingInBox: 0.05,
+      netPeriod: 0.25,
+      previousValues: { cashSales: 100, cardSales: 200, expenses: 50, totalSales: 300 },
+      correctionReason: 'تصحيح بدقة الهللات 0.1 + 0.2 = 0.30',
+      correctedBy: 'mgr_01',
+      correctedByName: 'مدير المؤسسة الرئيسية',
+      correctedAt: '2026-11-15T10:05:00Z',
+      updatedAt: '2026-11-15T10:05:00Z',
+    });
+    okBatch.set(mgrDb.doc('auditLogs/log_halala_ok'), {
+      id: 'log_halala_ok',
+      orgId: 'org_main',
+      actorId: 'mgr_01',
+      actorName: 'مدير المؤسسة الرئيسية',
+      actorRole: 'manager',
+      action: 'CLOSING_ADMIN_CORRECTED',
+      targetType: 'closing',
+      targetId: closingId,
+      details: 'تصحيح ناجح بدقة الهللات 0.1 + 0.2 = 0.30',
+      timestamp: '2026-11-15T10:05:00Z',
+      previousValues: { cashSales: 100, cardSales: 200, expenses: 50, totalSales: 300 },
+      newValues: { cashSales: 0.1, cardSales: 0.2, expenses: 0.05, totalSales: 0.3 },
+    });
+    await assertSucceeds(okBatch.commit());
+  });
+
   await testEnv.cleanup();
 
   const passedCount = outcomes.filter((o) => o.passed).length;

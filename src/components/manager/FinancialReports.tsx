@@ -8,7 +8,12 @@ import {
   exportClosingsToCSV,
 } from '../../utils/accounting';
 import {
+  generateClosingsSummaryExcel,
+  downloadXlsxBytes,
+} from '../../services/excelReportService';
+import {
   FileText,
+  FileSpreadsheet,
   Download,
   Printer,
   Calendar,
@@ -80,8 +85,27 @@ export const FinancialReports: React.FC = () => {
   const totalRemainingInBox = filtered.reduce((acc, c) => acc + c.remainingInBox, 0);
   const totalNetPeriod = filtered.reduce((acc, c) => acc + c.netPeriod, 0);
 
+  const [exportingXlsx, setExportingXlsx] = useState(false);
+
   const handleExportCSV = () => {
     exportClosingsToCSV(filtered, currentOrg?.currency || 'SAR');
+  };
+
+  const handleExportXlsx = async () => {
+    if (exportingXlsx) return;
+    setExportingXlsx(true);
+    try {
+      const scopeLabel =
+        statusScope === 'approved' ? 'الإقفالات المعتمدة' : 'شامل الحالات';
+      const { bytes, fileName } = await generateClosingsSummaryExcel({
+        closings: filtered,
+        org: currentOrg,
+        statusScopeLabel: scopeLabel,
+      });
+      downloadXlsxBytes(bytes, fileName);
+    } finally {
+      setExportingXlsx(false);
+    }
   };
 
   const handlePrint = () => {
@@ -102,13 +126,22 @@ export const FinancialReports: React.FC = () => {
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={handleExportCSV}
             className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-800 dark:text-white bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 shadow-sm flex items-center gap-2 transition-colors"
           >
             <Download className="w-4 h-4 text-amber-500" />
-            <span>تصدير Excel (CSV)</span>
+            <span>تصدير (CSV)</span>
+          </button>
+
+          <button
+            onClick={handleExportXlsx}
+            disabled={exportingXlsx}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-800 dark:text-white bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-emerald-500/40 shadow-sm flex items-center gap-2 transition-colors disabled:opacity-50"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
+            <span>{exportingXlsx ? 'جاري التوليد...' : 'تصدير Excel (.xlsx)'}</span>
           </button>
 
           <button
