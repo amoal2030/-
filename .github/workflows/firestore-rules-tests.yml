@@ -4,12 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main
-      - master
-  pull_request:
-    branches:
-      - main
-      - master
+      - test/firestore-rules-emulator
 
 permissions:
   contents: read
@@ -65,6 +60,9 @@ jobs:
         env:
           VITE_GOOGLE_DRIVE_CLIENT_ID: ${{ vars.VITE_GOOGLE_DRIVE_CLIENT_ID || secrets.VITE_GOOGLE_DRIVE_CLIENT_ID }}
         run: npm run build
+
+      - name: Run All 7 Excel & Halala Verification Tests
+        run: npx tsx src/tests/excelReportService.test.ts
 
       - name: Run All 23 closingArchives Firestore Rules Tests in Isolated Emulator
         env:
