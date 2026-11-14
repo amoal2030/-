@@ -22,6 +22,8 @@ export interface DriveMonthFolderRef {
   updatedAt: string;
 }
 
+export type DriveHealthStatus = 'untested' | 'verified' | 'failed' | 'disconnected';
+
 export interface Organization {
   id: string;
   name: string;
@@ -40,6 +42,10 @@ export interface Organization {
   driveLinkedAt?: string;
   driveMonthFolderIds?: Record<string, DriveMonthFolderRef>;
   driveConnected: boolean;
+  driveWriteVerified?: boolean;
+  driveWriteVerifiedAt?: string;
+  driveLastHealthStatus?: DriveHealthStatus;
+  driveHealthError?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -32,6 +32,7 @@ export const EmployeeDashboard: React.FC = () => {
     currentOrg,
     currentBranch,
     closings,
+    driveReadiness,
     submitShiftClosing,
     logout,
   } = useAuth();
@@ -59,6 +60,11 @@ export const EmployeeDashboard: React.FC = () => {
   const calc = calculateShiftTotals(cashSales, cardSales, expenses);
 
   const handleSubmit = async (targetStatus: 'draft' | 'pending_review') => {
+    if (!driveReadiness.isReady) {
+      setErrorMsg(driveReadiness.message);
+      return;
+    }
+
     if (!currentBranch) {
       setErrorMsg('لم يتم تعيين فرع لحسابك. يرجى التواصل مع المدير العام.');
       return;
@@ -166,17 +172,31 @@ export const EmployeeDashboard: React.FC = () => {
             </div>
 
             <button
+              type="button"
+              disabled={!driveReadiness.isReady}
               onClick={() => {
                 setCashSales('1500');
                 setCardSales('2000');
                 setExpenses('400');
               }}
-              className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 py-1"
+              className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Sparkles className="w-3.5 h-3.5" />
               <span>تحميل المثال القياسي</span>
             </button>
           </div>
+
+          {!driveReadiness.isReady && (
+            <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/35 text-rose-600 dark:text-rose-400 text-xs space-y-1.5">
+              <div className="flex items-center gap-2 font-bold text-sm">
+                <Lock className="w-4 h-4 shrink-0" />
+                <span>{driveReadiness.message}</span>
+              </div>
+              <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                لا يمكن إرسال ورديات أو عمليات جديدة قبل أن يقوم مدير المؤسسة بربط حساب Google Drive الخاص بالمؤسسة والتحقق من جاهزيته للكتابة والقراءة. الموظف لا يقوم بربط Drive بنفسه.
+              </p>
+            </div>
+          )}
 
           {errorMsg && (
             <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-center gap-2.5">
@@ -192,7 +212,7 @@ export const EmployeeDashboard: React.FC = () => {
             </div>
           )}
 
-          <div className="space-y-4">
+          <fieldset disabled={!driveReadiness.isReady || loading} className="space-y-4 disabled:opacity-60">
             {/* Date & Period */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
@@ -341,8 +361,8 @@ export const EmployeeDashboard: React.FC = () => {
               <button
                 type="button"
                 onClick={() => handleSubmit('pending_review')}
-                disabled={loading}
-                className="flex-1 py-3.5 rounded-xl font-bold text-xs sm:text-sm text-slate-950 bg-amber-400 hover:bg-amber-300 transition-all active:scale-98 shadow-md shadow-amber-500/20 disabled:opacity-50"
+                disabled={loading || !driveReadiness.isReady}
+                className="flex-1 py-3.5 rounded-xl font-bold text-xs sm:text-sm text-slate-950 bg-amber-400 hover:bg-amber-300 transition-all active:scale-98 shadow-md shadow-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? 'جاري الحفظ...' : 'إرسال الإقفال للمدير للمراجعة'}
               </button>
@@ -350,13 +370,13 @@ export const EmployeeDashboard: React.FC = () => {
               <button
                 type="button"
                 onClick={() => handleSubmit('draft')}
-                disabled={loading}
-                className="px-4 py-3.5 rounded-xl font-semibold text-xs text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                disabled={loading || !driveReadiness.isReady}
+                className="px-4 py-3.5 rounded-xl font-semibold text-xs text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 حفظ كمسودة
               </button>
             </div>
-          </div>
+          </fieldset>
         </div>
 
         {/* Employee Summary & Info: 5 Cols */}

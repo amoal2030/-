@@ -1057,3 +1057,383 @@ export async function ensureBranchMonthDriveFolder(params: {
     },
   };
 }
+
+export const DRIVE_NOT_READY_MESSAGE =
+  'يجب على مدير المؤسسة ربط Google Drive والتحقق من جاهزيته قبل استخدام النظام.';
+
+export interface OrgDriveReadinessResult {
+  isReady: boolean;
+  reasonCode:
+    | 'ready'
+    | 'not_connected'
+    | 'missing_org_folder'
+    | 'health_failed'
+    | 'write_not_verified'
+    | 'missing_branch_folder';
+  message: string;
+  detail?: string;
+}
+
+/**
+ * Single source of truth evaluating whether an organization (and optional target branch)
+ * has a linked Google Drive verified for actual write and read-back operations.
+ */
+export function evaluateOrgDriveReadiness(
+  org: Organization | null | undefined,
+  branch?: Branch | null
+): OrgDriveReadinessResult {
+  if (!org || org.driveConnected !== true) {
+    return {
+      isReady: false,
+      reasonCode: 'not_connected',
+      message: DRIVE_NOT_READY_MESSAGE,
+      detail: 'لم يتم ربط Google Drive للمؤسسة حتى الآن.',
+    };
+  }
+
+  if (!org.driveFolderId || !org.driveFolderId.trim()) {
+    return {
+      isReady: false,
+      reasonCode: 'missing_org_folder',
+      message: DRIVE_NOT_READY_MESSAGE,
+      detail: 'معرّف مجلد المؤسسة في Google Drive مفقود.',
+    };
+  }
+
+  if (org.driveLastHealthStatus === 'failed') {
+    return {
+      isReady: false,
+      reasonCode: 'health_failed',
+      message: DRIVE_NOT_READY_MESSAGE,
+      detail: org.driveHealthError || 'فشل آخر اختبار جاهزية للكتابة والقراءة في Google Drive.',
+    };
+  }
+
+  if (org.driveWriteVerified !== true) {
+    return {
+      isReady: false,
+      reasonCode: 'write_not_verified',
+      message: DRIVE_NOT_READY_MESSAGE,
+      detail: 'مجلدات Google Drive مرتبطة ولكن لم يُتحقق بعد من صلاحية الكتابة والقراءة الفعلية.',
+    };
+  }
+
+  if (branch && (!branch.driveFolderId || !branch.driveFolderId.trim())) {
+    return {
+      isReady: false,
+      reasonCode: 'missing_branch_folder',
+      message: DRIVE_NOT_READY_MESSAGE,
+      detail: `مجلد الفرع (${branch.name}) غير مزامن في Google Drive بعد. يرجى تنفيذ مزامنة المجلدات من إعدادات المدير.`,
+    };
+  }
+
+  return {
+    isReady: true,
+    reasonCode: 'ready',
+    message: 'Google Drive مرتبط وجاهز للكتابة والقراءة.',
+  };
+}
+
+export interface DriveWriteReadTestResult {
+  verified: true;
+  verifiedAt: string;
+  testFileId: string;
+  testFileName: string;
+  cleanedUp: boolean;
+  cleanupMessage: string;
+}
+
+/**
+ * Performs a real end-to-end write, metadata read-back (files.get), content read-back
+ * (files.get?alt=media), and best-effort cleanup (files.delete) inside the organization's
+ * Drive folder using strictly the existing drive.file OAuth scope.
+ * Never persists any token. Throws clear Arabic errors on 401/403/404 or mismatch.
+ */
+export async function verifyDriveWriteReadCapability(params: {
+  token: string;
+  org: Organization;
+  orgFolderId: string;
+}): Promise<DriveWriteReadTestResult> {
+  const { token, org, orgFolderId } = params;
+
+  if (!token || !token.trim()) {
+    throw new Error('رمز تفويض Google Drive غير متاح لتنفيذ اختبار الكتابة والقراءة.');
+  }
+  if (!orgFolderId || !orgFolderId.trim()) {
+    throw new Error('معرّف مجلد المؤسسة غير متاح لتنفيذ اختبار الكتابة والقراءة في Google Drive.');
+  }
+
+  const checkedAt = new Date().toISOString();
+  const nonce = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  const testFileName = `.al_eqfal_health_check_${org.id}_${nonce}.json`;
+
+  const expectedAppProperties: Record<string, string> = {
+    systemId: 'al_eqfal',
+    role: 'health_check',
+    orgId: org.id,
+    nonce,
+  };
+
+  const payloadObject = {
+    systemId: 'al_eqfal',
+    purpose: 'drive_write_read_health_check',
+    orgId: org.id,
+    orgFolderId,
+    nonce,
+    checkedAt,
+  };
+  const payloadText = JSON.stringify(payloadObject);
+
+  const metadata = {
+    name: testFileName,
+    mimeType: 'application/json',
+    parents: [orgFolderId],
+    appProperties: expectedAppProperties,
+  };
+
+  const boundary = `al_eqfal_boundary_${nonce}`;
+  const multipartBody =
+    `--${boundary}\r\n` +
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+    `${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\n` +
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+    `${payloadText}\r\n` +
+    `--${boundary}--`;
+
+  let createdFileId: string | null = null;
+
+  const bestEffortDelete = async (fileId: string): Promise<{ deleted: boolean; note: string }> => {
+    try {
+      const delRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (delRes.ok || delRes.status === 204 || delRes.status === 404) {
+        return { deleted: true, note: 'تم التحقق وحذف ملف الاختبار المؤقت بنجاح.' };
+      }
+      return {
+        deleted: false,
+        note: `تم التحقق بنجاح والاحتفاظ بملف التحقق (${testFileName}) لعدم إمكانية حذفه (رمز: ${delRes.status}).`,
+      };
+    } catch {
+      return {
+        deleted: false,
+        note: `تم التحقق بنجاح والاحتفاظ بملف التحقق (${testFileName}).`,
+      };
+    }
+  };
+
+  try {
+    // 1. Write test file via multipart upload
+    let createRes: Response;
+    try {
+      createRes = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,parents,appProperties,size,trashed',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': `multipart/related; boundary=${boundary}`,
+          },
+          body: multipartBody,
+        }
+      );
+    } catch (networkErr: any) {
+      throw new Error(
+        `فشل الاتصال أثناء اختبار الكتابة في Google Drive: ${networkErr?.message || networkErr}`
+      );
+    }
+
+    if (!createRes.ok) {
+      const errJson = await createRes.json().catch(() => ({}));
+      throw formatDriveHttpError({
+        status: createRes.status,
+        apiMessage: errJson?.error?.message,
+        folderRoleLabel: 'ملف اختبار الجاهزية',
+        folderName: testFileName,
+        operation: 'create',
+        parentId: orgFolderId,
+      });
+    }
+
+    const created = await createRes.json();
+    if (!created?.id || typeof created.id !== 'string') {
+      throw new Error('استجابة اختبار الكتابة في Google Drive لم تُرجع معرّف ملف صالحاً.');
+    }
+    const fileId: string = created.id;
+    createdFileId = fileId;
+
+    if (created.appProperties) {
+      const createPropsErr = findAppPropertiesMismatch(created.appProperties, expectedAppProperties);
+      if (createPropsErr) {
+        throw new Error(`تعارض خصائص ملف اختبار الكتابة بعد الإنشاء: ${createPropsErr}`);
+      }
+    }
+    if (Array.isArray(created.parents) && !created.parents.includes(orgFolderId)) {
+      throw new Error(
+        `تم إنشاء ملف الاختبار خارج مجلد المؤسسة المحدد (${orgFolderId}).`
+      );
+    }
+
+    // 2. Metadata read-back verification via files.get (bounded retry on transient 404)
+    const retryDelays = [400, 800];
+    let metaDataVerified = false;
+    let last404Msg: string | undefined;
+
+    for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+      if (attempt > 0) {
+        await sleep(retryDelays[attempt - 1]);
+      }
+
+      let metaRes: Response;
+      try {
+        metaRes = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+            fileId
+          )}?fields=id,name,mimeType,parents,appProperties,size,trashed`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+          }
+        );
+      } catch (networkErr: any) {
+        throw new Error(
+          `فشل الاتصال أثناء قراءة بيانات ملف الاختبار من Google Drive: ${
+            networkErr?.message || networkErr
+          }`
+        );
+      }
+
+      if (metaRes.status === 404) {
+        const errJson = await metaRes.json().catch(() => ({}));
+        last404Msg = errJson?.error?.message;
+        if (attempt < retryDelays.length) {
+          continue;
+        }
+        throw formatDriveHttpError({
+          status: 404,
+          apiMessage: last404Msg,
+          folderRoleLabel: 'ملف اختبار الجاهزية',
+          folderName: testFileName,
+          operation: 'get',
+          folderId: fileId,
+          parentId: orgFolderId,
+        });
+      }
+
+      if (!metaRes.ok) {
+        const errJson = await metaRes.json().catch(() => ({}));
+        throw formatDriveHttpError({
+          status: metaRes.status,
+          apiMessage: errJson?.error?.message,
+          folderRoleLabel: 'ملف اختبار الجاهزية',
+          folderName: testFileName,
+          operation: 'get',
+          folderId: fileId,
+          parentId: orgFolderId,
+        });
+      }
+
+      const meta = await metaRes.json();
+      if (meta.id !== fileId || meta.trashed === true) {
+        throw new Error('تعذر التحقق من سلامة ملف الاختبار عبر files.get بعد إنشائه.');
+      }
+      if (meta.name !== testFileName) {
+        throw new Error(`اسم ملف الاختبار المقروء (${meta.name}) لا يطابق الاسم المنشأ (${testFileName}).`);
+      }
+      const metaPropsErr = findAppPropertiesMismatch(meta.appProperties, expectedAppProperties);
+      if (metaPropsErr) {
+        throw new Error(`خصائص ملف الاختبار المقروءة لا تطابق المتوقع: ${metaPropsErr}`);
+      }
+      if (!Array.isArray(meta.parents) || !meta.parents.includes(orgFolderId)) {
+        throw new Error('مسار المجلد الأب لملف الاختبار المقروء لا يطابق مجلد المؤسسة.');
+      }
+
+      metaDataVerified = true;
+      break;
+    }
+
+    if (!metaDataVerified) {
+      throw formatDriveHttpError({
+        status: 404,
+        apiMessage: last404Msg,
+        folderRoleLabel: 'ملف اختبار الجاهزية',
+        folderName: testFileName,
+        operation: 'get',
+        folderId: fileId,
+        parentId: orgFolderId,
+      });
+    }
+
+    // 3. Content read-back verification via files.get?alt=media
+    let mediaRes: Response;
+    try {
+      mediaRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+    } catch (networkErr: any) {
+      throw new Error(
+        `فشل الاتصال أثناء قراءة محتوى ملف الاختبار من Google Drive: ${
+          networkErr?.message || networkErr
+        }`
+      );
+    }
+
+    if (!mediaRes.ok) {
+      const errJson = await mediaRes.json().catch(() => ({}));
+      throw formatDriveHttpError({
+        status: mediaRes.status,
+        apiMessage: errJson?.error?.message,
+        folderRoleLabel: 'محتوى ملف اختبار الجاهزية',
+        folderName: testFileName,
+        operation: 'get',
+        folderId: fileId,
+        parentId: orgFolderId,
+      });
+    }
+
+    const readContentText = await mediaRes.text();
+    let parsedContent: any;
+    try {
+      parsedContent = JSON.parse(readContentText);
+    } catch {
+      throw new Error('محتوى ملف الاختبار المقروء من Google Drive غير صالح أو تالف.');
+    }
+
+    if (
+      parsedContent?.systemId !== 'al_eqfal' ||
+      parsedContent?.purpose !== 'drive_write_read_health_check' ||
+      parsedContent?.orgId !== org.id ||
+      parsedContent?.orgFolderId !== orgFolderId ||
+      parsedContent?.nonce !== nonce ||
+      parsedContent?.checkedAt !== checkedAt
+    ) {
+      throw new Error(
+        'فشلت مطابقة محتوى ملف الاختبار المقروء من Google Drive مع البيانات المكتوبة.'
+      );
+    }
+
+    // 4. Delete temporary test file (or retain gracefully as verification file if delete is blocked)
+    const cleanup = await bestEffortDelete(fileId);
+
+    return {
+      verified: true,
+      verifiedAt: checkedAt,
+      testFileId: fileId,
+      testFileName,
+      cleanedUp: cleanup.deleted,
+      cleanupMessage: cleanup.note,
+    };
+  } catch (err) {
+    if (createdFileId) {
+      await bestEffortDelete(createdFileId);
+    }
+    throw err;
+  }
+}

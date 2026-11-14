@@ -30,6 +30,7 @@ import {
   clearDriveSession,
   getDriveOAuthClientConfig,
   provisionOrganizationDriveHierarchy,
+  verifyDriveWriteReadCapability,
   assertDriveSessionMatchesAccount,
   buildGoogleDriveFolderUrl,
   DriveTokenSession,
@@ -45,7 +46,9 @@ export const SettingsView: React.FC = () => {
     setCurrentBranch,
     currentUser,
     saveDriveConnection,
+    recordDriveHealthFailure,
     disconnectDriveConnection,
+    driveReadiness,
   } = useAuth();
   const { language, setLanguage } = useLanguage();
   const { theme, setTheme } = useTheme();
@@ -56,6 +59,7 @@ export const SettingsView: React.FC = () => {
   const [driveSession, setDriveSession] = useState<DriveTokenSession | null>(() => getActiveDriveSession());
   const [driveLoading, setDriveLoading] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
+  const [healthCheckLoading, setHealthCheckLoading] = useState(false);
   const [disconnectLoading, setDisconnectLoading] = useState(false);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [driveError, setDriveError] = useState<string | null>(null);
@@ -188,6 +192,13 @@ export const SettingsView: React.FC = () => {
 
       assertCompleteProvisionResult(provisionResult, branches.length);
 
+      // Mandatory actual write + read-back verification before marking Drive ready
+      const writeReadResult = await verifyDriveWriteReadCapability({
+        token: session.accessToken,
+        org: currentOrg,
+        orgFolderId: provisionResult.orgFolder.folderId,
+      });
+
       await saveDriveConnection({
         driveAccountEmail: session.email,
         driveAccountName: session.name,
@@ -195,6 +206,8 @@ export const SettingsView: React.FC = () => {
         orgFolderId: provisionResult.orgFolder.folderId,
         orgFolderName: provisionResult.orgFolder.folderName,
         orgFolderLink: provisionResult.orgFolder.webViewLink,
+        driveWriteVerified: true,
+        driveWriteVerifiedAt: writeReadResult.verifiedAt,
         branchFolders: provisionResult.branchResults.map((r) => ({
           branchId: r.branchId,
           folderId: r.branchFolder.folderId,
@@ -205,10 +218,14 @@ export const SettingsView: React.FC = () => {
       });
 
       setDriveSuccess(
-        `تم التحقق الفعلي من حساب (${session.email}) ومجلد المؤسسة "${provisionResult.orgFolder.folderName}" وتهيئة (${provisionResult.branchResults.length}) فرع لشهر ${currentYearMonth} بنجاح.`
+        `تم التحقق الفعلي من حساب (${session.email}) ومجلد المؤسسة "${provisionResult.orgFolder.folderName}" وتهيئة (${provisionResult.branchResults.length}) فرع لشهر ${currentYearMonth}، واجتياز اختبار الكتابة والقراءة بنجاح (${writeReadResult.cleanupMessage}).`
       );
     } catch (err: any) {
-      setDriveError(err?.message || 'تعذر إتمام ربط Google Drive.');
+      const errMsg = err?.message || 'تعذر إتمام ربط Google Drive أو فشل اختبار الكتابة والقراءة.';
+      if (currentOrg?.driveConnected) {
+        await recordDriveHealthFailure(errMsg);
+      }
+      setDriveError(errMsg);
       setDriveSession(getActiveDriveSession());
     } finally {
       setDriveLoading(false);
@@ -289,6 +306,13 @@ export const SettingsView: React.FC = () => {
       // Never treat Firestore write alone as proof; ensure every folder passed Drive verification first
       assertCompleteProvisionResult(provisionResult, branches.length);
 
+      // Re-verify actual write & read-back capability using drive.file
+      const writeReadResult = await verifyDriveWriteReadCapability({
+        token: session.accessToken,
+        org: currentOrg,
+        orgFolderId: provisionResult.orgFolder.folderId,
+      });
+
       await saveDriveConnection({
         driveAccountEmail: session.email,
         driveAccountName: session.name,
@@ -296,6 +320,8 @@ export const SettingsView: React.FC = () => {
         orgFolderId: provisionResult.orgFolder.folderId,
         orgFolderName: provisionResult.orgFolder.folderName,
         orgFolderLink: provisionResult.orgFolder.webViewLink,
+        driveWriteVerified: true,
+        driveWriteVerifiedAt: writeReadResult.verifiedAt,
         branchFolders: provisionResult.branchResults.map((r) => ({
           branchId: r.branchId,
           folderId: r.branchFolder.folderId,
@@ -306,13 +332,107 @@ export const SettingsView: React.FC = () => {
       });
 
       setDriveSuccess(
-        `تم التحقق الفعلي من مجلد المؤسسة وتحديث مجلدات (${provisionResult.branchResults.length}) فرع لشهر ${currentYearMonth} في حساب (${session.email}) بنجاح.`
+        `تم التحقق الفعلي من مجلد المؤسسة وتحديث مجلدات (${provisionResult.branchResults.length}) فرع لشهر ${currentYearMonth}، واجتياز اختبار الكتابة والقراءة في حساب (${session.email}) بنجاح (${writeReadResult.cleanupMessage}).`
       );
     } catch (err: any) {
-      setDriveError(err?.message || 'حدث خطأ أثناء مزامنة مجلدات Google Drive.');
+      const errMsg = err?.message || 'حدث خطأ أثناء مزامنة مجلدات Google Drive أو فحص الكتابة والقراءة.';
+      await recordDriveHealthFailure(errMsg);
+      setDriveError(errMsg);
       setDriveSession(getActiveDriveSession());
     } finally {
       setSyncLoading(false);
+    }
+  };
+
+  /**
+   * Re-authorizes expired session if needed and executes full folder + write/read readiness verification.
+   */
+  const handleVerifyDriveHealth = async () => {
+    setDriveError(null);
+    setDriveSuccess(null);
+
+    if (!currentOrg || !isOrgOwner) {
+      setDriveError('فحص جاهزية Google Drive مقتصر حصراً على مالك المؤسسة المعتمد.');
+      return;
+    }
+
+    if (!isGoogleProviderPresent || !googleProvider?.uid) {
+      setDriveError('يلزم تسجيل الدخول بحساب Google المعتمد للمالك لإعادة التفويض وإجراء الفحص.');
+      return;
+    }
+
+    const ownerEmail = googleProvider.email || currentOrg.ownerEmail || '';
+    setHealthCheckLoading(true);
+    try {
+      let session = getActiveDriveSession();
+      if (session) {
+        assertDriveSessionMatchesAccount(session, {
+          googleUid: googleProvider.uid,
+          email: ownerEmail,
+          linkedSub: currentOrg.driveGoogleSub,
+          linkedEmail: currentOrg.driveAccountEmail,
+        });
+      } else {
+        if (!isOAuthConfigured) {
+          throw new Error('متغير البيئة VITE_GOOGLE_DRIVE_CLIENT_ID غير مضبوط في نسخة البناء الحالية.');
+        }
+        session = await requestDriveAuthorization(googleProvider.uid, ownerEmail, {
+          linkedSub: currentOrg.driveGoogleSub,
+          linkedEmail: currentOrg.driveAccountEmail,
+        });
+        assertDriveSessionMatchesAccount(session, {
+          googleUid: googleProvider.uid,
+          email: ownerEmail,
+          linkedSub: currentOrg.driveGoogleSub,
+          linkedEmail: currentOrg.driveAccountEmail,
+        });
+        setDriveSession(session);
+        setRemainingMinutes(Math.max(0, Math.floor((session.expiresAt - Date.now()) / 60000)));
+      }
+
+      const provisionResult = await provisionOrganizationDriveHierarchy({
+        token: session.accessToken,
+        org: currentOrg,
+        branches,
+        yearMonth: currentYearMonth,
+      });
+
+      assertCompleteProvisionResult(provisionResult, branches.length);
+
+      const writeReadResult = await verifyDriveWriteReadCapability({
+        token: session.accessToken,
+        org: currentOrg,
+        orgFolderId: provisionResult.orgFolder.folderId,
+      });
+
+      await saveDriveConnection({
+        driveAccountEmail: session.email,
+        driveAccountName: session.name,
+        driveGoogleSub: session.sub,
+        orgFolderId: provisionResult.orgFolder.folderId,
+        orgFolderName: provisionResult.orgFolder.folderName,
+        orgFolderLink: provisionResult.orgFolder.webViewLink,
+        driveWriteVerified: true,
+        driveWriteVerifiedAt: writeReadResult.verifiedAt,
+        branchFolders: provisionResult.branchResults.map((r) => ({
+          branchId: r.branchId,
+          folderId: r.branchFolder.folderId,
+          folderName: r.branchFolder.folderName,
+          webViewLink: r.branchFolder.webViewLink,
+        })),
+        monthFolderMap: provisionResult.monthFolderMap,
+      });
+
+      setDriveSuccess(
+        `نجح فحص جاهزية Google Drive (كتابة وقراءة فعلية ومطابقة المحتوى) لحساب (${session.email}). ${writeReadResult.cleanupMessage}`
+      );
+    } catch (err: any) {
+      const errMsg = err?.message || 'فشل فحص جاهزية الكتابة والقراءة في Google Drive.';
+      await recordDriveHealthFailure(errMsg);
+      setDriveError(errMsg);
+      setDriveSession(getActiveDriveSession());
+    } finally {
+      setHealthCheckLoading(false);
     }
   };
 
@@ -478,7 +598,7 @@ export const SettingsView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Connection Status Badge */}
+              {/* Connection & Readiness Status Badges */}
               <div className="flex flex-wrap items-center gap-2">
                 {currentOrg?.driveConnected ? (
                   <div className="flex items-center gap-2 px-3 py-1 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-500 text-xs font-bold">
@@ -490,6 +610,24 @@ export const SettingsView: React.FC = () => {
                     <span className="w-2 h-2 rounded-full bg-slate-400" />
                     <span>غير مرتبط</span>
                   </div>
+                )}
+
+                {currentOrg?.driveConnected && (
+                  driveReadiness.isReady ? (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-500 text-[11px] font-bold">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>جاهز للكتابة والقراءة</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-500 text-[11px] font-bold">
+                      <AlertCircle className="w-3.5 h-3.5" />
+                      <span>
+                        {currentOrg.driveLastHealthStatus === 'failed'
+                          ? 'فشل فحص الكتابة والقراءة'
+                          : 'بانتظار فحص الجاهزية'}
+                      </span>
+                    </div>
+                  )
                 )}
 
                 {driveSession && (
@@ -594,12 +732,54 @@ export const SettingsView: React.FC = () => {
                     <span className="font-bold text-slate-900 dark:text-white block">
                       {driveSession
                         ? `نشط (${remainingMinutes > 0 ? `${remainingMinutes} دقيقة متبقية` : 'أقل من دقيقة'})`
-                        : 'منتهٍ / يتطلب إعادة تفويض عند المزامنة'}
+                        : 'منتهٍ / يتطلب إعادة تفويض عند المزامنة والفحص'}
                     </span>
                     <span className="text-[10px] text-slate-400 block">
-                      لا يُخزن أي Access Token في Firestore
+                      لا يُخزن أي Access Token في Firestore أو LocalStorage
                     </span>
                   </div>
+                </div>
+
+                {/* Non-Secret Write/Read Readiness Health Card */}
+                <div
+                  className={`p-3.5 rounded-xl border text-xs space-y-1.5 ${
+                    driveReadiness.isReady
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+                      : 'bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-300'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 font-bold">
+                    <span className="flex items-center gap-1.5">
+                      {driveReadiness.isReady ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                      )}
+                      <span>
+                        حالة جاهزية الكتابة والقراءة:{' '}
+                        {currentOrg.driveLastHealthStatus === 'verified' && currentOrg.driveWriteVerified
+                          ? 'مؤكدة ومختبرة فعلياً'
+                          : currentOrg.driveLastHealthStatus === 'failed'
+                          ? 'فشل الفحص — الإدخال متوقف مؤقتاً'
+                          : 'غير مختبرة بعد — يرجى تنفيذ فحص الجاهزية'}
+                      </span>
+                    </span>
+                    {currentOrg.driveWriteVerifiedAt && (
+                      <span className="text-[11px] font-mono opacity-80">
+                        آخر تحقق: {new Date(currentOrg.driveWriteVerifiedAt).toLocaleString('ar-SA')}
+                      </span>
+                    )}
+                  </div>
+                  {!driveReadiness.isReady && (
+                    <p className="text-[11px] leading-relaxed">
+                      {driveReadiness.detail || driveReadiness.message}
+                    </p>
+                  )}
+                  {!driveSession && (
+                    <p className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
+                      تنبيه الجلسة: انتهت صلاحية جلسة التفويض المؤقتة في هذا المتصفح. اضغط على «إعادة التفويض وفحص الجاهزية» لتجديد الجلسة.
+                    </p>
+                  )}
                 </div>
 
                 {/* Organization Root Folder Card */}
@@ -693,8 +873,24 @@ export const SettingsView: React.FC = () => {
                 <div className="flex flex-wrap items-center gap-3 pt-1">
                   <button
                     type="button"
+                    onClick={handleVerifyDriveHealth}
+                    disabled={healthCheckLoading || syncLoading || driveLoading || disconnectLoading || !isOAuthConfigured}
+                    className="px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 shadow-sm flex items-center gap-2 transition-all active:scale-95"
+                  >
+                    <ShieldCheck className={`w-4 h-4 ${healthCheckLoading ? 'animate-pulse' : ''}`} />
+                    <span>
+                      {healthCheckLoading
+                        ? 'جاري اختبار الكتابة والقراءة...'
+                        : driveSession
+                        ? 'اختبار جاهزية الكتابة والقراءة'
+                        : 'إعادة التفويض وفحص الجاهزية'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={handleSyncDriveFolders}
-                    disabled={syncLoading || driveLoading || disconnectLoading || !isOAuthConfigured}
+                    disabled={syncLoading || healthCheckLoading || driveLoading || disconnectLoading || !isOAuthConfigured}
                     className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 disabled:opacity-50 shadow-sm flex items-center gap-2 transition-all active:scale-95"
                   >
                     {syncLoading ? (
@@ -704,7 +900,7 @@ export const SettingsView: React.FC = () => {
                     )}
                     <span>
                       {syncLoading
-                        ? 'جاري مزامنة المجلدات...'
+                        ? 'جاري مزامنة المجلدات والفحص...'
                         : 'مزامنة مجلدات الفروع والشهر الحالي'}
                     </span>
                   </button>
@@ -712,7 +908,7 @@ export const SettingsView: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleConnectDrive}
-                    disabled={driveLoading || syncLoading || disconnectLoading || !isOAuthConfigured}
+                    disabled={driveLoading || syncLoading || healthCheckLoading || disconnectLoading || !isOAuthConfigured}
                     className="px-3.5 py-2.5 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-[#070e17] hover:border-amber-500/50 border border-slate-300 dark:border-slate-800 disabled:opacity-50 flex items-center gap-2 transition-colors"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${driveLoading ? 'animate-spin' : ''}`} />
@@ -723,7 +919,7 @@ export const SettingsView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setConfirmDisconnect(true)}
-                      disabled={driveLoading || syncLoading || disconnectLoading}
+                      disabled={driveLoading || syncLoading || healthCheckLoading || disconnectLoading}
                       className="px-3.5 py-2.5 rounded-xl text-xs font-bold text-rose-500 bg-rose-500/10 hover:bg-rose-500/15 border border-rose-500/25 disabled:opacity-50 flex items-center gap-2 transition-colors"
                     >
                       <Unlink className="w-3.5 h-3.5" />

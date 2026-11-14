@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { ManagerOverview } from './manager/ManagerOverview';
@@ -11,6 +11,7 @@ import { SettingsView } from './manager/SettingsView';
 import { EmployeeDashboard } from './employee/EmployeeDashboard';
 import { useTheme } from '../context/ThemeContext';
 import { SupportedLanguage } from '../types';
+import { getActiveDriveSession } from '../services/driveService';
 import {
   Building2,
   Lock,
@@ -29,7 +30,9 @@ import {
   Sun,
   Moon,
   Globe,
-  ChevronDown
+  ChevronDown,
+  AlertTriangle,
+  Clock
 } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
@@ -40,6 +43,7 @@ export const Dashboard: React.FC = () => {
     branches,
     currentBranch,
     closings,
+    driveReadiness,
     logout,
     refreshTenantData,
   } = useAuth();
@@ -51,6 +55,14 @@ export const Dashboard: React.FC = () => {
   // Manager navigation tab state (including new Settings tab)
   const [managerTab, setManagerTab] = useState<'overview' | 'closings' | 'reports' | 'branches' | 'employees' | 'audit' | 'settings'>('overview');
   const [langMenuOpen, setLangMenuOpen] = useState(false);
+  const [hasActiveDriveSession, setHasActiveDriveSession] = useState<boolean>(() => Boolean(getActiveDriveSession()));
+
+  useEffect(() => {
+    const syncSessionFlag = () => setHasActiveDriveSession(Boolean(getActiveDriveSession()));
+    syncSessionFlag();
+    const interval = setInterval(syncSessionFlag, 15000);
+    return () => clearInterval(interval);
+  }, [managerTab, currentOrg?.driveConnected, currentOrg?.driveWriteVerifiedAt]);
 
   // Count pending reviews for manager badge
   const pendingCount = closings.filter((c) => c.status === 'pending_review').length;
@@ -305,7 +317,53 @@ export const Dashboard: React.FC = () => {
       </header>
 
       {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex-1 w-full">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex-1 w-full space-y-6">
+        {isManager && !driveReadiness.isReady && managerTab !== 'settings' && (
+          <div className="p-4 sm:p-5 rounded-2xl bg-rose-500/10 border border-rose-500/35 flex flex-wrap items-center justify-between gap-4 no-print">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-500 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1 text-xs">
+                <p className="font-bold text-rose-600 dark:text-rose-400 text-sm">
+                  {driveReadiness.message}
+                </p>
+                {driveReadiness.detail && (
+                  <p className="text-slate-600 dark:text-slate-300">{driveReadiness.detail}</p>
+                )}
+                <p className="text-slate-500 dark:text-slate-400">
+                  إدخال الورديات والعمليات التشغيلية الجديدة متوقف تلقائياً للمدير والموظفين حتى إتمام الربط واختبار الكتابة والقراءة.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setManagerTab('settings')}
+              className="px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 shadow-sm shrink-0 transition-colors"
+            >
+              ربط والتحقق من Google Drive
+            </button>
+          </div>
+        )}
+
+        {isManager && driveReadiness.isReady && !hasActiveDriveSession && managerTab !== 'settings' && (
+          <div className="p-3.5 sm:p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-wrap items-center justify-between gap-3 no-print">
+            <div className="flex items-center gap-2.5 text-xs text-amber-700 dark:text-amber-300">
+              <Clock className="w-4 h-4 text-amber-500 shrink-0" />
+              <span>
+                انتهت صلاحية جلسة تفويض Google Drive المؤقتة أو لم تُفعّل في هذا المتصفح. يرجى إعادة التفويض من الإعدادات عند الحاجة للفحص أو المزامنة.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setManagerTab('settings')}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 shrink-0 transition-colors"
+            >
+              إعادة التفويض الآن
+            </button>
+          </div>
+        )}
+
         {isManager ? (
           /* Manager View Router */
           <>

@@ -22,6 +22,7 @@ import {
 import {
   doc,
   getDoc,
+  getDocFromServer,
   setDoc,
   updateDoc,
   collection,
@@ -43,12 +44,18 @@ import {
   ShiftClosing,
   ClosingStatus,
   DriveMonthFolderRef,
+  DriveHealthStatus,
 } from '../types';
 import {
   calculateShiftTotals,
   generateDeterministicClosingId,
 } from '../utils/accounting';
-import { clearDriveSession } from '../services/driveService';
+import {
+  clearDriveSession,
+  evaluateOrgDriveReadiness,
+  OrgDriveReadinessResult,
+  DRIVE_NOT_READY_MESSAGE,
+} from '../services/driveService';
 
 interface AuthContextType {
   currentUser: FirebaseUser | null;
@@ -113,6 +120,8 @@ interface AuthContextType {
     orgFolderId: string;
     orgFolderName: string;
     orgFolderLink: string;
+    driveWriteVerified: boolean;
+    driveWriteVerifiedAt: string;
     branchFolders?: Array<{
       branchId: string;
       folderId: string;
@@ -121,7 +130,9 @@ interface AuthContextType {
     }>;
     monthFolderMap?: Record<string, DriveMonthFolderRef>;
   }) => Promise<void>;
+  recordDriveHealthFailure: (errorMessage: string) => Promise<void>;
   disconnectDriveConnection: () => Promise<void>;
+  driveReadiness: OrgDriveReadinessResult;
   logout: () => Promise<void>;
   refreshTenantData: () => Promise<void>;
   setCurrentBranch: (branch: Branch) => void;
@@ -187,6 +198,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (!currentOrg?.id || !currentUser?.uid || !userProfile || !userProfile.isActive) return;
     if (userProfile.orgId !== currentOrg.id) return;
+
+    // 0. Real-time Organization & Branches listeners so Drive readiness & folder state sync immediately
+    const orgDocRef = doc(db, 'organizations', currentOrg.id);
+    const unsubOrg = onSnapshot(
+      orgDocRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setCurrentOrg(docSnap.data() as Organization);
+        }
+      },
+      (error) => {
+        console.warn('Organization listener notice:', error?.message);
+      }
+    );
+
+    const branchesRef = collection(db, 'branches');
+    const branchesQuery = query(branchesRef, where('orgId', '==', currentOrg.id));
+    const unsubBranches = onSnapshot(
+      branchesQuery,
+      (snapshot) => {
+        const loaded: Branch[] = [];
+        snapshot.forEach((b) => loaded.push(b.data() as Branch));
+        setBranches(loaded);
+        setCurrentBranch((prev) => {
+          if (userProfile.role === 'employee' && userProfile.branchId) {
+            return loaded.find((b) => b.id === userProfile.branchId) || loaded[0] || null;
+          }
+          if (prev) {
+            return loaded.find((b) => b.id === prev.id) || loaded[0] || null;
+          }
+          return loaded[0] || null;
+        });
+      },
+      (error) => {
+        console.warn('Branches listener notice:', error?.message);
+      }
+    );
 
     // 1. Closings snapshot listener (scoped to orgId)
     const closingsRef = collection(db, 'closings');
@@ -273,6 +321,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     return () => {
+      unsubOrg();
+      unsubBranches();
       unsubClosings();
       unsubSelf();
       unsubUsers();
@@ -438,6 +488,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ownerEmail: email,
       ownerName: name,
       driveConnected: false,
+      driveWriteVerified: false,
+      driveLastHealthStatus: 'untested',
       createdAt: nowIso,
       updatedAt: nowIso,
     };
@@ -719,6 +771,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Branch Assignment Security Check: Employee can ONLY submit for their assigned branch
     if (userProfile.role === 'employee' && userProfile.branchId && userProfile.branchId !== data.branchId) {
       throw new Error('لا يمكنك إنشاء إقفال لفرع غير مخصص لحسابك.');
+    }
+
+    // Phase 1 Pre-Write Storage Gate: Block both manager and employee if Drive is not linked & write/read verified
+    const targetBranchInMemory = branches.find((b) => b.id === data.branchId) || null;
+    const localReadiness = evaluateOrgDriveReadiness(currentOrg, targetBranchInMemory);
+    if (!localReadiness.isReady) {
+      throw new Error(localReadiness.message);
+    }
+
+    // Anti-bypass fresh server check against Firestore (prevents stale in-memory state bypass)
+    try {
+      const [freshOrgSnap, freshBranchSnap] = await Promise.all([
+        getDocFromServer(doc(db, 'organizations', currentOrg.id)),
+        getDocFromServer(doc(db, 'branches', data.branchId)),
+      ]);
+      if (!freshOrgSnap.exists() || !freshBranchSnap.exists()) {
+        throw new Error(DRIVE_NOT_READY_MESSAGE);
+      }
+      const freshOrg = freshOrgSnap.data() as Organization;
+      const freshBranch = freshBranchSnap.data() as Branch;
+      const serverReadiness = evaluateOrgDriveReadiness(freshOrg, freshBranch);
+      if (!serverReadiness.isReady) {
+        setCurrentOrg(freshOrg);
+        throw new Error(serverReadiness.message);
+      }
+    } catch (gateErr: any) {
+      if (gateErr?.message === DRIVE_NOT_READY_MESSAGE) {
+        throw gateErr;
+      }
+      throw new Error(
+        'تعذر التحقق الفوري من جاهزية Google Drive على الخادم قبل الحفظ. يرجى التحقق من الاتصال والمحاولة مجدداً.'
+      );
     }
 
     const calc = calculateShiftTotals(data.cashSales, data.cardSales, data.expenses);
@@ -1034,6 +1118,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     orgFolderId: string;
     orgFolderName: string;
     orgFolderLink: string;
+    driveWriteVerified: boolean;
+    driveWriteVerifiedAt: string;
     branchFolders?: Array<{
       branchId: string;
       folderId: string;
@@ -1055,6 +1141,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!data.orgFolderId || !data.driveGoogleSub || !data.driveAccountEmail) {
       throw new Error('بيانات مجلد المؤسسة أو هوية Google غير مكتملة.');
     }
+    if (data.driveWriteVerified !== true || !data.driveWriteVerifiedAt) {
+      throw new Error('لا يمكن اعتماد ربط Google Drive قبل نجاح اختبار الكتابة والقراءة الفعلية.');
+    }
 
     const nowIso = new Date().toISOString();
     const orgRef = doc(db, 'organizations', currentOrg.id);
@@ -1069,6 +1158,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       driveAccountName: data.driveAccountName,
       driveGoogleSub: data.driveGoogleSub,
       driveLinkedAt: nowIso,
+      driveWriteVerified: true,
+      driveWriteVerifiedAt: data.driveWriteVerifiedAt,
+      driveLastHealthStatus: 'verified' as DriveHealthStatus,
+      driveHealthError: deleteField(),
       updatedAt: nowIso,
     };
 
@@ -1110,6 +1203,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             driveAccountName: data.driveAccountName,
             driveGoogleSub: data.driveGoogleSub,
             driveLinkedAt: nowIso,
+            driveWriteVerified: true,
+            driveWriteVerifiedAt: data.driveWriteVerifiedAt,
+            driveLastHealthStatus: 'verified',
+            driveHealthError: undefined,
             driveMonthFolderIds: data.monthFolderMap ?? prev.driveMonthFolderIds,
             updatedAt: nowIso,
           }
@@ -1146,6 +1243,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   /**
+   * Records non-secret Drive health failure in Firestore when a linked organization fails
+   * write/read verification so operational entry stays safely gated until resolved.
+   */
+  const recordDriveHealthFailure = async (errorMessage: string) => {
+    if (!currentUser || !currentOrg || !userProfile) return;
+    if (
+      userProfile.role !== 'manager' ||
+      !userProfile.isActive ||
+      currentUser.uid !== currentOrg.ownerId
+    ) {
+      return;
+    }
+    if (!currentOrg.driveConnected) return;
+
+    const nowIso = new Date().toISOString();
+    const safeError = (errorMessage || 'فشل التحقق من جاهزية Google Drive').slice(0, 500);
+    const orgRef = doc(db, 'organizations', currentOrg.id);
+
+    try {
+      await updateDoc(orgRef, {
+        driveWriteVerified: false,
+        driveLastHealthStatus: 'failed' as DriveHealthStatus,
+        driveHealthError: safeError,
+        updatedAt: nowIso,
+      });
+
+      setCurrentOrg((prev) =>
+        prev
+          ? {
+              ...prev,
+              driveWriteVerified: false,
+              driveLastHealthStatus: 'failed',
+              driveHealthError: safeError,
+              updatedAt: nowIso,
+            }
+          : prev
+      );
+    } catch (err) {
+      console.warn('Notice recording Drive health failure:', err);
+    }
+  };
+
+  /**
    * Disconnects Google Drive integration metadata in Firestore without deleting
    * any files in Google Drive or any operational records in Firestore.
    */
@@ -1169,6 +1309,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     batch.update(orgRef, {
       driveConnected: false,
+      driveWriteVerified: false,
+      driveLastHealthStatus: 'disconnected' as DriveHealthStatus,
+      driveWriteVerifiedAt: deleteField(),
+      driveHealthError: deleteField(),
       driveFolderId: deleteField(),
       driveFolderName: deleteField(),
       driveFolderLink: deleteField(),
@@ -1203,6 +1347,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ? {
             ...prev,
             driveConnected: false,
+            driveWriteVerified: false,
+            driveLastHealthStatus: 'disconnected',
+            driveWriteVerifiedAt: undefined,
+            driveHealthError: undefined,
             driveFolderId: undefined,
             driveFolderName: undefined,
             driveFolderLink: undefined,
@@ -1263,6 +1411,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const driveReadiness = evaluateOrgDriveReadiness(currentOrg, currentBranch);
+
   return (
     <AuthContext.Provider
       value={{
@@ -1288,7 +1438,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         reviewShiftClosing,
         adminCorrectClosing,
         saveDriveConnection,
+        recordDriveHealthFailure,
         disconnectDriveConnection,
+        driveReadiness,
         logout,
         refreshTenantData,
         setCurrentBranch,
