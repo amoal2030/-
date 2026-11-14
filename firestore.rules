@@ -48,6 +48,397 @@ service cloud.firestore {
         getUserData().role == 'manager';
     }
 
+    function isValidYearMonth(ym) {
+      return ym is string && ym.matches('^\\d{4}-(0[1-9]|1[0-2])$');
+    }
+
+    function isValidDriveId(val) {
+      return val is string &&
+        val.size() >= 1 &&
+        val.size() <= 256 &&
+        val.matches('^[a-zA-Z0-9._\\-]+$') &&
+        !val.matches('.*\\.\\..*');
+    }
+
+    function isValidIsoTimestamp(ts) {
+      return ts is string &&
+        ts.size() >= 20 &&
+        ts.size() <= 40 &&
+        ts.matches('^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$');
+    }
+
+    function closingMatchesYearMonth(c, ym) {
+      return c.date is string &&
+        c.date.size() == 10 &&
+        c.date.matches('^' + ym + '-(0[1-9]|[12]\\d|3[01])$');
+    }
+
+    function hasNoDriveProofFields(data) {
+      return !('driveExcelFileId' in data) &&
+        !('driveExcelFileName' in data) &&
+        !('driveExcelWebViewLink' in data) &&
+        !('driveMonthFolderId' in data) &&
+        !('drivePayloadHash' in data) &&
+        !('driveRevision' in data) &&
+        !('previousDriveExcelFileId' in data) &&
+        !('sourceCorrectionAt' in data) &&
+        !('archivedAt' in data) &&
+        !('archivedBy' in data);
+    }
+
+    function isValidNonApprovedEmployeeClosingData(c, targetOrgId, targetBranchId, ym) {
+      return c.orgId == targetOrgId &&
+        c.branchId == targetBranchId &&
+        c.employeeId == request.auth.uid &&
+        c.status in ['draft', 'pending_review', 'rejected'] &&
+        closingMatchesYearMonth(c, ym);
+    }
+
+    function isExistingClosingNonApprovedForEmployee(closingId, targetOrgId, targetBranchId, ym) {
+      let c = get(/databases/$(database)/documents/closings/$(closingId)).data;
+      return isValidNonApprovedEmployeeClosingData(c, targetOrgId, targetBranchId, ym);
+    }
+
+    function isAfterClosingNonApprovedForEmployee(closingId, targetOrgId, targetBranchId, ym) {
+      let cAfter = getAfter(/databases/$(database)/documents/closings/$(closingId)).data;
+      return isValidNonApprovedEmployeeClosingData(cAfter, targetOrgId, targetBranchId, ym);
+    }
+
+    function hasValidOptionalArchiveFields(data) {
+      return (!('driveExcelFileId' in data) || isValidDriveId(data.driveExcelFileId)) &&
+        (!('driveExcelFileName' in data) || (data.driveExcelFileName is string && data.driveExcelFileName.trim().size() >= 5 && data.driveExcelFileName.size() <= 256 && data.driveExcelFileName.matches('^[^/\\\\]+\\.[xX][lL][sS][xX]$'))) &&
+        (!('driveMonthFolderId' in data) || isValidDriveId(data.driveMonthFolderId)) &&
+        (!('driveExcelWebViewLink' in data) || (data.driveExcelWebViewLink is string && data.driveExcelWebViewLink.size() >= 12 && data.driveExcelWebViewLink.size() <= 512 && data.driveExcelWebViewLink.matches('^https://[a-zA-Z0-9.\\-]+/.*$'))) &&
+        (!('drivePayloadHash' in data) || (data.drivePayloadHash is string && data.drivePayloadHash.size() == 64 && data.drivePayloadHash.matches('^[a-fA-F0-9]{64}$'))) &&
+        (!('driveRevision' in data) || (data.driveRevision is int && data.driveRevision >= 1 && data.driveRevision <= 100000)) &&
+        (!('previousDriveExcelFileId' in data) || isValidDriveId(data.previousDriveExcelFileId)) &&
+        (!('sourceCorrectionAt' in data) || isValidIsoTimestamp(data.sourceCorrectionAt)) &&
+        (!('archivedAt' in data) || isValidIsoTimestamp(data.archivedAt)) &&
+        (!('archivedBy' in data) || isValidId(data.archivedBy)) &&
+        (!('archiveError' in data) || (data.archiveError is string && data.archiveError.trim().size() >= 5 && data.archiveError.size() <= 1000));
+    }
+
+    function hasValidArchivedDriveProof(data, cAfter) {
+      return data.keys().hasAll([
+          'driveExcelFileId',
+          'driveExcelFileName',
+          'driveMonthFolderId',
+          'drivePayloadHash',
+          'driveRevision',
+          'archivedAt',
+          'archivedBy'
+        ]) &&
+        isValidDriveId(data.driveExcelFileId) &&
+        data.driveExcelFileName is string &&
+        data.driveExcelFileName.trim().size() >= 5 &&
+        data.driveExcelFileName.size() <= 256 &&
+        data.driveExcelFileName.matches('^[^/\\\\]+\\.[xX][lL][sS][xX]$') &&
+        isValidDriveId(data.driveMonthFolderId) &&
+        data.drivePayloadHash is string &&
+        data.drivePayloadHash.size() == 64 &&
+        data.drivePayloadHash.matches('^[a-fA-F0-9]{64}$') &&
+        data.driveRevision is int &&
+        data.driveRevision >= 1 &&
+        data.driveRevision <= 100000 &&
+        isValidIsoTimestamp(data.archivedAt) &&
+        isValidId(data.archivedBy) &&
+        data.archivedBy == request.auth.uid &&
+        (!('driveExcelWebViewLink' in data) || (data.driveExcelWebViewLink is string && data.driveExcelWebViewLink.size() >= 12 && data.driveExcelWebViewLink.size() <= 512 && data.driveExcelWebViewLink.matches('^https://[a-zA-Z0-9.\\-]+/.*$'))) &&
+        (!('previousDriveExcelFileId' in data) || isValidDriveId(data.previousDriveExcelFileId)) &&
+        (
+          (!('correctedAt' in cAfter) && !('sourceCorrectionAt' in data)) ||
+          ('correctedAt' in cAfter && 'sourceCorrectionAt' in data && data.sourceCorrectionAt == cAfter.correctedAt)
+        ) &&
+        !('archiveError' in data);
+    }
+
+    // Preserves ONLY the old archived Drive file proof (strictly separated from sourceCorrectionAt)
+    function preservesPreviousArchiveProof(nextData, prevData) {
+      return prevData.keys().hasAll([
+          'driveExcelFileId',
+          'driveExcelFileName',
+          'driveMonthFolderId',
+          'drivePayloadHash',
+          'driveRevision',
+          'archivedAt',
+          'archivedBy'
+        ]) &&
+        nextData.driveExcelFileId == prevData.driveExcelFileId &&
+        nextData.driveExcelFileName == prevData.driveExcelFileName &&
+        nextData.driveMonthFolderId == prevData.driveMonthFolderId &&
+        nextData.drivePayloadHash == prevData.drivePayloadHash &&
+        nextData.driveRevision == prevData.driveRevision &&
+        nextData.archivedAt == prevData.archivedAt &&
+        nextData.archivedBy == prevData.archivedBy &&
+        (
+          (!('driveExcelWebViewLink' in prevData) && !('driveExcelWebViewLink' in nextData)) ||
+          ('driveExcelWebViewLink' in prevData && 'driveExcelWebViewLink' in nextData && nextData.driveExcelWebViewLink == prevData.driveExcelWebViewLink)
+        ) &&
+        (
+          (!('previousDriveExcelFileId' in prevData) && !('previousDriveExcelFileId' in nextData)) ||
+          ('previousDriveExcelFileId' in prevData && 'previousDriveExcelFileId' in nextData && nextData.previousDriveExcelFileId == prevData.previousDriveExcelFileId)
+        );
+    }
+
+    // Preserves sourceCorrectionAt matching the active correction in the parent closing
+    function preservesCurrentCorrectionRef(nextData, prevData, cAfter) {
+      return 'sourceCorrectionAt' in prevData &&
+        'sourceCorrectionAt' in nextData &&
+        isValidIsoTimestamp(nextData.sourceCorrectionAt) &&
+        nextData.sourceCorrectionAt == prevData.sourceCorrectionAt &&
+        'correctedAt' in cAfter &&
+        nextData.sourceCorrectionAt == cAfter.correctedAt;
+    }
+
+    function matchesFreshAdminCorrection(closingId, nextData, prevData, cAfter) {
+      let cBefore = get(/databases/$(database)/documents/closings/$(closingId)).data;
+      return cBefore.status == 'approved' &&
+        cAfter.status == 'approved' &&
+        'correctedBy' in cAfter &&
+        cAfter.correctedBy == request.auth.uid &&
+        'correctedAt' in cAfter &&
+        isValidIsoTimestamp(cAfter.correctedAt) &&
+        cAfter.correctedAt != cBefore.get('correctedAt', '') &&
+        cAfter.correctedAt != prevData.get('sourceCorrectionAt', '') &&
+        'sourceCorrectionAt' in nextData &&
+        nextData.sourceCorrectionAt == cAfter.correctedAt;
+    }
+
+    function isFreshAdminCorrectionForStale(closingId, nextData, prevData, cAfter) {
+      return exists(/databases/$(database)/documents/closings/$(closingId)) &&
+        matchesFreshAdminCorrection(closingId, nextData, prevData, cAfter);
+    }
+
+    function hasRequiredReArchiveProgression(nextData, prevData, cAfter) {
+      return 'driveRevision' in prevData && prevData.driveRevision is int &&
+        'drivePayloadHash' in prevData &&
+        'driveExcelFileId' in prevData &&
+        nextData.driveRevision >= prevData.driveRevision + 1 &&
+        nextData.drivePayloadHash != prevData.drivePayloadHash &&
+        nextData.driveExcelFileId != prevData.driveExcelFileId &&
+        'previousDriveExcelFileId' in nextData &&
+        nextData.previousDriveExcelFileId == prevData.driveExcelFileId &&
+        preservesCurrentCorrectionRef(nextData, prevData, cAfter);
+    }
+
+    function hasStatusRequiredFieldsOnCreate(data, cAfter) {
+      return (
+          data.archiveStatus == 'pending_drive_sync' &&
+          cAfter.status in ['draft', 'pending_review', 'rejected', 'approved'] &&
+          hasNoDriveProofFields(data) &&
+          !('archiveError' in data)
+        ) ||
+        (
+          data.archiveStatus == 'failed' &&
+          cAfter.status == 'approved' &&
+          hasNoDriveProofFields(data) &&
+          'archiveError' in data &&
+          data.archiveError is string &&
+          data.archiveError.trim().size() >= 5
+        ) ||
+        (
+          data.archiveStatus == 'archived' &&
+          cAfter.status == 'approved' &&
+          !('previousDriveExcelFileId' in data) &&
+          hasValidArchivedDriveProof(data, cAfter)
+        );
+    }
+
+    function isValidManagerTransition(closingId, nextData, prevData, cAfter) {
+      return (
+        // 1. pending_drive_sync -> pending_drive_sync
+        (
+          prevData.archiveStatus == 'pending_drive_sync' &&
+          nextData.archiveStatus == 'pending_drive_sync' &&
+          cAfter.status in ['draft', 'pending_review', 'rejected', 'approved'] &&
+          hasNoDriveProofFields(prevData) &&
+          hasNoDriveProofFields(nextData) &&
+          !('archiveError' in nextData)
+        ) ||
+        // 2. pending_drive_sync -> failed
+        (
+          prevData.archiveStatus == 'pending_drive_sync' &&
+          nextData.archiveStatus == 'failed' &&
+          cAfter.status == 'approved' &&
+          hasNoDriveProofFields(prevData) &&
+          hasNoDriveProofFields(nextData) &&
+          'archiveError' in nextData
+        ) ||
+        // 3. pending_drive_sync -> archived
+        (
+          prevData.archiveStatus == 'pending_drive_sync' &&
+          nextData.archiveStatus == 'archived' &&
+          cAfter.status == 'approved' &&
+          hasNoDriveProofFields(prevData) &&
+          !('previousDriveExcelFileId' in nextData) &&
+          hasValidArchivedDriveProof(nextData, cAfter)
+        ) ||
+        // 4. failed -> pending_drive_sync (never archived before)
+        (
+          prevData.archiveStatus == 'failed' &&
+          nextData.archiveStatus == 'pending_drive_sync' &&
+          cAfter.status == 'approved' &&
+          hasNoDriveProofFields(prevData) &&
+          hasNoDriveProofFields(nextData) &&
+          !('archiveError' in nextData)
+        ) ||
+        // 5. failed -> failed (preserves prior proof & sourceCorrectionAt if previously archived)
+        (
+          prevData.archiveStatus == 'failed' &&
+          nextData.archiveStatus == 'failed' &&
+          cAfter.status == 'approved' &&
+          'archiveError' in nextData &&
+          (
+            (hasNoDriveProofFields(prevData) && hasNoDriveProofFields(nextData)) ||
+            (
+              'driveExcelFileId' in prevData &&
+              preservesPreviousArchiveProof(nextData, prevData) &&
+              preservesCurrentCorrectionRef(nextData, prevData, cAfter)
+            )
+          )
+        ) ||
+        // 6. failed -> archived (first archive OR re-archive preserving prior ref & sourceCorrectionAt)
+        (
+          prevData.archiveStatus == 'failed' &&
+          nextData.archiveStatus == 'archived' &&
+          cAfter.status == 'approved' &&
+          hasValidArchivedDriveProof(nextData, cAfter) &&
+          (
+            (hasNoDriveProofFields(prevData) && !('previousDriveExcelFileId' in nextData)) ||
+            ('driveExcelFileId' in prevData && hasRequiredReArchiveProgression(nextData, prevData, cAfter))
+          )
+        ) ||
+        // 7 & 9 & 11. archived / stale / failed(with prior proof) -> stale (ONLY on fresh atomic correction)
+        (
+          (
+            prevData.archiveStatus in ['archived', 'stale'] ||
+            (prevData.archiveStatus == 'failed' && 'driveExcelFileId' in prevData)
+          ) &&
+          nextData.archiveStatus == 'stale' &&
+          !('archiveError' in nextData) &&
+          preservesPreviousArchiveProof(nextData, prevData) &&
+          isFreshAdminCorrectionForStale(closingId, nextData, prevData, cAfter)
+        ) ||
+        // 10. stale -> failed (preserves old file proof AND current sourceCorrectionAt)
+        (
+          prevData.archiveStatus == 'stale' &&
+          nextData.archiveStatus == 'failed' &&
+          cAfter.status == 'approved' &&
+          'archiveError' in nextData &&
+          preservesPreviousArchiveProof(nextData, prevData) &&
+          preservesCurrentCorrectionRef(nextData, prevData, cAfter)
+        ) ||
+        // 12. stale -> archived (higher revision, new hash & file ID, preserves prev file ref, matches sourceCorrectionAt)
+        (
+          prevData.archiveStatus == 'stale' &&
+          nextData.archiveStatus == 'archived' &&
+          cAfter.status == 'approved' &&
+          hasValidArchivedDriveProof(nextData, cAfter) &&
+          hasRequiredReArchiveProgression(nextData, prevData, cAfter)
+        )
+      );
+    }
+
+    function managerArchiveCreateMatchesClosing(closingId, data) {
+      let cAfter = getAfter(/databases/$(database)/documents/closings/$(closingId)).data;
+      return cAfter.orgId == data.orgId &&
+        cAfter.branchId == data.branchId &&
+        closingMatchesYearMonth(cAfter, data.yearMonth) &&
+        hasStatusRequiredFieldsOnCreate(data, cAfter);
+    }
+
+    function managerArchiveUpdateMatchesClosing(closingId, nextData, prevData) {
+      let cAfter = getAfter(/databases/$(database)/documents/closings/$(closingId)).data;
+      return cAfter.orgId == prevData.orgId &&
+        cAfter.branchId == prevData.branchId &&
+        closingMatchesYearMonth(cAfter, prevData.yearMonth) &&
+        isValidManagerTransition(closingId, nextData, prevData, cAfter);
+    }
+
+    function canReadClosingArchive(data) {
+      let userData = getUserData();
+      return userData.isActive == true &&
+        userData.orgId == data.orgId && (
+          userData.role == 'manager' ||
+          (
+            userData.role == 'employee' &&
+            userData.get('branchId', '') is string &&
+            userData.get('branchId', '').size() > 0 &&
+            data.branchId == userData.get('branchId', '')
+          )
+        );
+    }
+
+    function canCreateClosingArchive(closingId, data) {
+      let userData = getUserData();
+      return userData.isActive == true &&
+        userData.orgId == data.orgId && (
+          (
+            userData.role == 'manager' &&
+            data.keys().hasOnly([
+              'closingId', 'orgId', 'branchId', 'yearMonth', 'archiveStatus',
+              'driveExcelFileId', 'driveExcelFileName', 'driveExcelWebViewLink',
+              'driveMonthFolderId', 'drivePayloadHash', 'driveRevision',
+              'previousDriveExcelFileId', 'sourceCorrectionAt',
+              'archivedAt', 'archivedBy', 'archiveError', 'updatedAt'
+            ]) &&
+            data.archiveStatus in ['pending_drive_sync', 'archived', 'failed'] &&
+            hasValidOptionalArchiveFields(data) &&
+            existsAfter(/databases/$(database)/documents/closings/$(closingId)) &&
+            managerArchiveCreateMatchesClosing(closingId, data)
+          ) ||
+          (
+            userData.role == 'employee' &&
+            userData.get('branchId', '') is string &&
+            userData.get('branchId', '').size() > 0 &&
+            userData.get('branchId', '') == data.branchId &&
+            data.keys().hasOnly([
+              'closingId', 'orgId', 'branchId', 'yearMonth', 'archiveStatus', 'updatedAt'
+            ]) &&
+            data.archiveStatus == 'pending_drive_sync' &&
+            (
+              !exists(/databases/$(database)/documents/closings/$(closingId)) ||
+              isExistingClosingNonApprovedForEmployee(closingId, data.orgId, data.branchId, data.yearMonth)
+            ) &&
+            existsAfter(/databases/$(database)/documents/closings/$(closingId)) &&
+            isAfterClosingNonApprovedForEmployee(closingId, data.orgId, data.branchId, data.yearMonth)
+          )
+        );
+    }
+
+    function canUpdateClosingArchive(closingId, nextData, prevData) {
+      let userData = getUserData();
+      return userData.isActive == true &&
+        userData.orgId == prevData.orgId && (
+          (
+            userData.role == 'manager' &&
+            nextData.diff(prevData).affectedKeys().hasOnly([
+              'archiveStatus',
+              'driveExcelFileId', 'driveExcelFileName', 'driveExcelWebViewLink',
+              'driveMonthFolderId', 'drivePayloadHash', 'driveRevision',
+              'previousDriveExcelFileId', 'sourceCorrectionAt',
+              'archivedAt', 'archivedBy', 'archiveError', 'updatedAt'
+            ]) &&
+            nextData.archiveStatus in ['pending_drive_sync', 'archived', 'failed', 'stale'] &&
+            hasValidOptionalArchiveFields(nextData) &&
+            existsAfter(/databases/$(database)/documents/closings/$(closingId)) &&
+            managerArchiveUpdateMatchesClosing(closingId, nextData, prevData)
+          ) ||
+          (
+            userData.role == 'employee' &&
+            prevData.branchId is string && prevData.branchId.size() > 0 &&
+            userData.get('branchId', '') == prevData.branchId &&
+            nextData.diff(prevData).affectedKeys().hasOnly(['archiveStatus', 'updatedAt']) &&
+            prevData.archiveStatus == 'pending_drive_sync' &&
+            nextData.archiveStatus == 'pending_drive_sync' &&
+            exists(/databases/$(database)/documents/closings/$(closingId)) &&
+            isExistingClosingNonApprovedForEmployee(closingId, prevData.orgId, prevData.branchId, prevData.yearMonth) &&
+            existsAfter(/databases/$(database)/documents/closings/$(closingId)) &&
+            isAfterClosingNonApprovedForEmployee(closingId, prevData.orgId, prevData.branchId, prevData.yearMonth)
+          )
+        );
+    }
+
     // Organizations Collection
     match /organizations/{orgId} {
       allow get: if isSignedIn() && isValidId(orgId) && (
@@ -364,6 +755,40 @@ service cloud.firestore {
 
       // STRICT IMMUTABILITY: No one can ever edit or delete an audit log
       allow update, delete: if false;
+    }
+
+    // Closing Archives Index Collection
+    match /closingArchives/{closingId} {
+      allow get: if isSignedIn() && isValidId(closingId) &&
+        hasValidUserDoc() &&
+        canReadClosingArchive(resource.data);
+
+      allow list: if isSignedIn() &&
+        hasValidUserDoc() &&
+        canReadClosingArchive(resource.data);
+
+      allow create: if isSignedIn() && isValidId(closingId) &&
+        incoming().keys().hasAll(['closingId', 'orgId', 'branchId', 'yearMonth', 'archiveStatus', 'updatedAt']) &&
+        incoming().closingId == closingId &&
+        isValidId(incoming().orgId) &&
+        isValidId(incoming().branchId) &&
+        isValidYearMonth(incoming().yearMonth) &&
+        isValidIsoTimestamp(incoming().updatedAt) &&
+        hasValidUserDoc() &&
+        canCreateClosingArchive(closingId, incoming());
+
+      allow update: if isSignedIn() && isValidId(closingId) &&
+        incoming().keys().hasAll(['closingId', 'orgId', 'branchId', 'yearMonth', 'archiveStatus', 'updatedAt']) &&
+        incoming().closingId == closingId &&
+        incoming().closingId == existing().closingId &&
+        incoming().orgId == existing().orgId &&
+        incoming().branchId == existing().branchId &&
+        incoming().yearMonth == existing().yearMonth &&
+        isValidIsoTimestamp(incoming().updatedAt) &&
+        hasValidUserDoc() &&
+        canUpdateClosingArchive(closingId, incoming(), existing());
+
+      allow delete: if false;
     }
   }
 }
