@@ -415,52 +415,20 @@ function formatDriveHttpError(params: {
 }
 
 /**
- * Resolves the real My Drive root folder ID via files.get('root')
- * so root-level folder parents can be verified strictly instead of skipping parent validation.
- */
-export async function resolveDriveRootId(token: string): Promise<string> {
-  let res: Response;
-  try {
-    res = await fetch('https://www.googleapis.com/drive/v3/files/root?fields=id', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-  } catch (networkErr: any) {
-    throw new Error(
-      `تعذر الاتصال بخادم Google Drive لقراءة جذر My Drive: ${networkErr?.message || networkErr}`
-    );
-  }
-
-  if (!res.ok) {
-    const errJson = await res.json().catch(() => ({}));
-    throw formatDriveHttpError({
-      status: res.status,
-      apiMessage: errJson?.error?.message,
-      folderRoleLabel: 'جذر My Drive',
-      folderName: 'root',
-      operation: 'root',
-    });
-  }
-
-  const data = await res.json();
-  if (!data?.id || typeof data.id !== 'string') {
-    throw new Error('استجابة Google Drive لم تُرجع معرّفاً صالحاً لجذر My Drive.');
-  }
-  return data.id;
-}
-
-/**
  * Strictly verifies a folder in Google Drive via files.get:
  * - Exists in Drive (supports bounded retry ONLY on transient post-create 404)
  * - Not trashed
  * - mimeType === application/vnd.google-apps.folder
  * - Exact name match
- * - parents includes expectedParentId (including resolved real My Drive root ID)
+ * - parents includes expectedParentId (when expectedParentId is a concrete folder ID),
+ *   or has a non-empty parents list when expectedParentId === 'root' (verified alongside 'root' in parents)
  */
 async function verifyFolderViaGet(params: {
   token: string;
   folderId: string;
   expectedName: string;
   expectedParentId: string;
+  expectedConcreteParentId?: string;
   folderRoleLabel: string;
   retryDelaysMsOn404?: number[];
 }): Promise<DriveFolderRef> {
@@ -469,6 +437,7 @@ async function verifyFolderViaGet(params: {
     folderId,
     expectedName,
     expectedParentId,
+    expectedConcreteParentId,
     folderRoleLabel,
     retryDelaysMsOn404 = [],
   } = params;
@@ -555,10 +524,20 @@ async function verifyFolderViaGet(params: {
       );
     }
 
-    if (!Array.isArray(data.parents) || !data.parents.includes(expectedParentId)) {
-      const actualParents = Array.isArray(data.parents) && data.parents.length > 0 ? data.parents.join(', ') : 'لا يوجد أب';
+    const actualParentsList: string[] = Array.isArray(data.parents) ? data.parents : [];
+    const concreteParentToMatch =
+      expectedConcreteParentId || (expectedParentId !== 'root' ? expectedParentId : undefined);
+
+    if (concreteParentToMatch) {
+      if (!actualParentsList.includes(concreteParentToMatch)) {
+        const actualParents = actualParentsList.length > 0 ? actualParentsList.join(', ') : 'لا يوجد أب';
+        throw new Error(
+          `تعارض المجلد الأب لـ ${folderRoleLabel} "${expectedName}" (المعرّف: ${folderId}): المتوقع داخل (${concreteParentToMatch}) لكن الفعلي (${actualParents}). تم إيقاف العملية دون نقل تلقائي.`
+        );
+      }
+    } else if (actualParentsList.length === 0) {
       throw new Error(
-        `تعارض المجلد الأب لـ ${folderRoleLabel} "${expectedName}" (المعرّف: ${folderId}): المتوقع داخل (${expectedParentId}) لكن الفعلي (${actualParents}). تم إيقاف العملية دون نقل تلقائي.`
+        `تعارض المجلد الأب لـ ${folderRoleLabel} "${expectedName}" (المعرّف: ${folderId}): لا يملك أي مجلد أب في Google Drive.`
       );
     }
 
@@ -566,7 +545,7 @@ async function verifyFolderViaGet(params: {
       folderId: data.id,
       folderName: data.name,
       webViewLink: data.webViewLink || `https://drive.google.com/drive/folders/${data.id}`,
-      parents: data.parents,
+      parents: actualParentsList,
       reused: true,
       verifiedViaGet: true,
     };
@@ -584,49 +563,17 @@ async function verifyFolderViaGet(params: {
 }
 
 /**
- * Idempotently locates or creates a folder in Google Drive:
- * 1. If existingFolderId is stored in Firestore, strictly verifies it via files.get (NO silent fallback on 401/403/404 or mismatch).
- * 2. Searches all pages (nextPageToken) in My Drive by exact name, folder mimeType, parent, and trashed=false.
- * 3. Halts on >1 match without deleting or guessing.
- * 4. Verifies single match via files.get before reusing.
- * 5. On 0 matches, calls files.create, validates created payload, then verifies via files.get (with bounded 404 retry).
+ * Searches all pages in My Drive for folders matching exact name, folder mimeType, parent, and trashed=false.
  */
-export async function ensureDriveFolder(params: {
+async function listMatchingDriveFolders(params: {
   token: string;
   folderName: string;
-  folderRoleLabel?: string;
   parentId: string;
-  resolvedParentId?: string;
-  appProperties: Record<string, string>;
-  existingFolderId?: string;
-}): Promise<DriveFolderRef> {
-  const {
-    token,
-    folderName,
-    folderRoleLabel = 'المجلد',
-    parentId,
-    appProperties,
-    existingFolderId,
-  } = params;
-
-  const expectedParentId =
-    params.resolvedParentId || (parentId === 'root' ? await resolveDriveRootId(token) : parentId);
-  const queryParentId = parentId === 'root' ? 'root' : expectedParentId;
-
-  // 1. If a folderId is already recorded in Firestore, verify it strictly via files.get
-  if (existingFolderId) {
-    return verifyFolderViaGet({
-      token,
-      folderId: existingFolderId,
-      expectedName: folderName,
-      expectedParentId,
-      folderRoleLabel,
-    });
-  }
-
-  // 2. Search across all pages in My Drive using exact criteria
+  folderRoleLabel: string;
+}): Promise<any[]> {
+  const { token, folderName, parentId, folderRoleLabel } = params;
   const escapedName = escapeDriveQueryValue(folderName);
-  const escapedParent = escapeDriveQueryValue(queryParentId);
+  const escapedParent = escapeDriveQueryValue(parentId);
   const queryFilter = `name = '${escapedName}' and mimeType = '${DRIVE_FOLDER_MIME}' and '${escapedParent}' in parents and trashed = false`;
 
   let matchingFolders: any[] = [];
@@ -666,7 +613,7 @@ export async function ensureDriveFolder(params: {
         folderRoleLabel,
         folderName,
         operation: 'search',
-        parentId: expectedParentId,
+        parentId,
       });
     }
 
@@ -676,6 +623,77 @@ export async function ensureDriveFolder(params: {
     }
     pageToken = data.nextPageToken;
   } while (pageToken);
+
+  return matchingFolders;
+}
+
+/**
+ * Idempotently locates or creates a folder in Google Drive (compatible with drive.file scope):
+ * 1. If existingFolderId is stored in Firestore, strictly verifies it via files.get (and checks 'root' in parents for root folders).
+ * 2. Searches all pages (nextPageToken) in My Drive using 'root' in parents (for org root) or parentId in parents.
+ * 3. Halts on >1 match without deleting or guessing.
+ * 4. Verifies single match via files.get before reusing.
+ * 5. On 0 matches, calls files.create with parents: ['root'] or [parentId], validates created payload, then verifies via files.get (with bounded 404 retry).
+ */
+export async function ensureDriveFolder(params: {
+  token: string;
+  folderName: string;
+  folderRoleLabel?: string;
+  parentId: string;
+  appProperties: Record<string, string>;
+  existingFolderId?: string;
+}): Promise<DriveFolderRef> {
+  const {
+    token,
+    folderName,
+    folderRoleLabel = 'المجلد',
+    parentId,
+    appProperties,
+    existingFolderId,
+  } = params;
+
+  // 1. If a folderId is already recorded in Firestore, verify it strictly via files.get
+  if (existingFolderId) {
+    const verifiedExisting = await verifyFolderViaGet({
+      token,
+      folderId: existingFolderId,
+      expectedName: folderName,
+      expectedParentId: parentId,
+      folderRoleLabel,
+    });
+
+    // For root-level folders under drive.file, confirm membership in My Drive root via 'root' in parents
+    // without calling files.get('root')
+    if (parentId === 'root') {
+      const rootMatches = await listMatchingDriveFolders({
+        token,
+        folderName,
+        parentId: 'root',
+        folderRoleLabel,
+      });
+      if (rootMatches.length > 1) {
+        const idsList = rootMatches.map((f) => f.id).join(' , ');
+        throw new Error(
+          `تم العثور على (${rootMatches.length}) مجلدات متطابقة لـ ${folderRoleLabel} "${folderName}" في جذر My Drive (المعرفات: ${idsList}). تم إيقاف العملية لمنع التكرار والتضارب.`
+        );
+      }
+      if (!rootMatches.some((f) => f.id === existingFolderId)) {
+        throw new Error(
+          `تعارض المجلد الأب لـ ${folderRoleLabel} "${folderName}" (المعرّف: ${existingFolderId}): المجلد لم يعد موجوداً داخل جذر My Drive. تم إيقاف العملية دون نقل أو إنشاء نسخة مكررة.`
+        );
+      }
+    }
+
+    return verifiedExisting;
+  }
+
+  // 2. Search across all pages in My Drive using exact criteria ('root' in parents or parentId in parents)
+  const matchingFolders = await listMatchingDriveFolders({
+    token,
+    folderName,
+    parentId,
+    folderRoleLabel,
+  });
 
   // 3. Multiple matches -> halt cleanly without random pick
   if (matchingFolders.length > 1) {
@@ -692,7 +710,7 @@ export async function ensureDriveFolder(params: {
       token,
       folderId: found.id,
       expectedName: folderName,
-      expectedParentId,
+      expectedParentId: parentId,
       folderRoleLabel,
     });
   }
@@ -711,7 +729,7 @@ export async function ensureDriveFolder(params: {
         body: JSON.stringify({
           name: folderName,
           mimeType: DRIVE_FOLDER_MIME,
-          parents: [expectedParentId],
+          parents: [parentId],
           appProperties,
         }),
       }
@@ -730,7 +748,7 @@ export async function ensureDriveFolder(params: {
       folderRoleLabel,
       folderName,
       operation: 'create',
-      parentId: expectedParentId,
+      parentId,
     });
   }
 
@@ -751,18 +769,28 @@ export async function ensureDriveFolder(params: {
       `استجابة files.create لـ ${folderRoleLabel} أرجعت اسماً غير مطابق (${created.name}) بدلاً من "${folderName}".`
     );
   }
-  if (Array.isArray(created.parents) && !created.parents.includes(expectedParentId)) {
+  if (
+    parentId !== 'root' &&
+    Array.isArray(created.parents) &&
+    !created.parents.includes(parentId)
+  ) {
     throw new Error(
-      `استجابة files.create لـ ${folderRoleLabel} "${folderName}" أرجعت أباً غير مطابق (${created.parents.join(', ')}) بدلاً من (${expectedParentId}).`
+      `استجابة files.create لـ ${folderRoleLabel} "${folderName}" أرجعت أباً غير مطابق (${created.parents.join(', ')}) بدلاً من (${parentId}).`
     );
   }
+
+  const createdConcreteRootParent =
+    parentId === 'root' && Array.isArray(created.parents) && created.parents.length > 0
+      ? created.parents[0]
+      : undefined;
 
   // 6. Mandatory post-create files.get verification (with bounded 404 retry for Drive indexing latency)
   const postVerified = await verifyFolderViaGet({
     token,
     folderId: created.id,
     expectedName: folderName,
-    expectedParentId,
+    expectedParentId: parentId,
+    expectedConcreteParentId: createdConcreteRootParent,
     folderRoleLabel,
     retryDelaysMsOn404: [500, 1000],
   });
@@ -775,7 +803,7 @@ export async function ensureDriveFolder(params: {
 
 /**
  * Provisions and strictly verifies the full organization hierarchy in the owner's Google Drive:
- *   My Drive (verified real root ID)
+ *   My Drive (parents: ['root'] & 'root' in parents, compatible with drive.file)
  *     └── AL EQFAL - [Organization Name] - [OrgID]
  *           └── [Branch Name] - [Branch Code]
  *                 └── [YYYY-MM]
@@ -793,17 +821,13 @@ export async function provisionOrganizationDriveHierarchy(params: {
     throw new Error('صيغة الشهر غير صحيحة. يجب أن تكون بصيغة YYYY-MM (مثل 2026-11).');
   }
 
-  // Resolve real My Drive root ID first (verifies token & Drive API connectivity immediately)
-  const verifiedRootId = await resolveDriveRootId(token);
-
-  // 1. Organization Root Folder
+  // 1. Organization Root Folder directly inside My Drive ('root')
   const orgFolderName = `AL EQFAL - ${org.name.trim()} - ${org.id}`;
   const orgFolder = await ensureDriveFolder({
     token,
     folderName: orgFolderName,
     folderRoleLabel: 'مجلد المؤسسة',
     parentId: 'root',
-    resolvedParentId: verifiedRootId,
     existingFolderId: org.driveFolderId || undefined,
     appProperties: {
       systemId: 'al_eqfal',
@@ -825,7 +849,6 @@ export async function provisionOrganizationDriveHierarchy(params: {
       folderName: branchFolderName,
       folderRoleLabel: `مجلد الفرع (${branch.name.trim()})`,
       parentId: orgFolder.folderId,
-      resolvedParentId: orgFolder.folderId,
       existingFolderId: branch.driveFolderId || undefined,
       appProperties: {
         systemId: 'al_eqfal',
@@ -842,7 +865,6 @@ export async function provisionOrganizationDriveHierarchy(params: {
       folderName: targetYearMonth,
       folderRoleLabel: `مجلد الشهر (${targetYearMonth}) للفرع (${branch.name.trim()})`,
       parentId: branchFolder.folderId,
-      resolvedParentId: branchFolder.folderId,
       existingFolderId: existingMonthRef?.folderId || undefined,
       appProperties: {
         systemId: 'al_eqfal',
@@ -894,7 +916,7 @@ export async function provisionOrganizationDriveHierarchy(params: {
     orgFolder,
     branchResults,
     monthFolderMap,
-    verifiedRootId,
+    verifiedRootId: orgFolder.parents?.[0] || 'root',
     verifiedCount: 1 + branchResults.length * 2,
   };
 }
@@ -917,15 +939,12 @@ export async function ensureBranchMonthDriveFolder(params: {
     throw new Error('صيغة الشهر غير صحيحة. يجب أن تكون بصيغة YYYY-MM (مثل 2026-11).');
   }
 
-  const verifiedRootId = await resolveDriveRootId(token);
-
   const orgFolderName = `AL EQFAL - ${org.name.trim()} - ${org.id}`;
   const orgFolder = await ensureDriveFolder({
     token,
     folderName: orgFolderName,
     folderRoleLabel: 'مجلد المؤسسة',
     parentId: 'root',
-    resolvedParentId: verifiedRootId,
     existingFolderId: org.driveFolderId || undefined,
     appProperties: {
       systemId: 'al_eqfal',
@@ -940,7 +959,6 @@ export async function ensureBranchMonthDriveFolder(params: {
     folderName: branchFolderName,
     folderRoleLabel: `مجلد الفرع (${branch.name.trim()})`,
     parentId: orgFolder.folderId,
-    resolvedParentId: orgFolder.folderId,
     existingFolderId: branch.driveFolderId || undefined,
     appProperties: {
       systemId: 'al_eqfal',
@@ -957,7 +975,6 @@ export async function ensureBranchMonthDriveFolder(params: {
     folderName: yearMonth,
     folderRoleLabel: `مجلد الشهر (${yearMonth}) للفرع (${branch.name.trim()})`,
     parentId: branchFolder.folderId,
-    resolvedParentId: branchFolder.folderId,
     existingFolderId: existingMonthRef?.folderId || undefined,
     appProperties: {
       systemId: 'al_eqfal',
